@@ -1,6 +1,6 @@
 # tinydocx
 
-Minimal DOCX/ODT creation library. **~680 LOC, zero dependencies.**
+Minimal DOCX/ODT creation library. **<1K LOC, zero dependencies.**
 
 ```
 npm install tinydocx
@@ -23,7 +23,7 @@ npm install tinydocx
 | --- | --- |
 | **Text** | Any size, bold/italic/underline, hex colors, custom fonts |
 | **Paragraphs** | Alignment (left/center/right) |
-| **Headings** | H1, H2, H3 |
+| **Headings** | H1–H6 |
 | **Lists** | Bullet and numbered |
 | **Tables** | With borders and column widths |
 | **Hyperlinks** | External links |
@@ -152,11 +152,56 @@ doc.footer((ctx) => ctx.pageNumber())
 ```typescript
 import { markdownToDocx, markdownToOdt } from 'tinydocx'
 
+const md = `
+# Heading 1
+## Heading 2
+
+This is **bold**, *italic*, ~~strikethrough~~, and \`inline code\`.
+
+- Bullet list
+  - Nested item
+- Another item
+
+1. Numbered list
+2. Second item
+
+> Blockquote with **formatting**
+
+| Name | Age |
+|------|-----|
+| Alice | 30 |
+
+\`\`\`javascript
+const code = 'block'
+\`\`\`
+
+[Link text](https://example.com)
+
+---
+`
+
 writeFileSync('output.docx', markdownToDocx(md))
 writeFileSync('output.odt', markdownToOdt(md))
 ```
 
-Supported: `# ## ###` headings, `- *` bullets, `1.` numbered, `---` rules
+**Supported syntax:**
+
+| Feature | Syntax |
+|---------|--------|
+| Headings | `# ## ### #### ##### ######` |
+| Bold | `**text**` or `__text__` |
+| Italic | `*text*` or `_text_` |
+| Strikethrough | `~~text~~` |
+| Inline code | `` `code` `` |
+| Links | `[text](url)` |
+| Images | `![alt](url)` |
+| Bullet lists | `- item` or `* item` |
+| Numbered lists | `1. item` |
+| Nested lists | Indent with spaces |
+| Tables | `\| col \| col \|` |
+| Code blocks | ` ``` ` |
+| Blockquotes | `> text` |
+| Horizontal rule | `---` or `***` or `___` |
 
 ---
 
