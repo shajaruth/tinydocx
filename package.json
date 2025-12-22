@@ -1,0 +1,51 @@
+{
+  "name": "tinydocx",
+  "version": "0.1.0",
+  "description": "Minimal DOCX/ODT creation library. Zero dependencies.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target node && bun run build:cjs && bun run build:types",
+    "build:cjs": "bun build ./src/index.ts --outfile ./dist/index.cjs --target node --format cjs",
+    "build:types": "tsc --declaration --emitDeclarationOnly --outDir dist src/index.ts",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "docx",
+    "odt",
+    "word",
+    "openoffice",
+    "document",
+    "minimal",
+    "zero-dependencies"
+  ],
+  "author": "Lulzx",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lulzx/tinydocx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Lulzx/tinydocx/issues"
+  },
+  "homepage": "https://github.com/Lulzx/tinydocx#readme",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}
