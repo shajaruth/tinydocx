@@ -122,33 +122,15 @@ const seq = <A, B>(p1: Parser<A>, p2: Parser<B>): Parser<[A, B]> => s => {
   return r2.ok ? ok([r1.val, r2.val], r2.rest) : fail()
 }
 
-const seq3 = <A, B, C>(p1: Parser<A>, p2: Parser<B>, p3: Parser<C>): Parser<[A, B, C]> => s => {
-  const r1 = p1(s)
-  if (!r1.ok) return fail()
-  const r2 = p2(r1.rest)
-  if (!r2.ok) return fail()
-  const r3 = p3(r2.rest)
-  return r3.ok ? ok([r1.val, r2.val, r3.val], r3.rest) : fail()
-}
+const alt = <T>(...ps: Parser<T>[]): Parser<T> => s =>
+  ps.reduce<Result<T>>((acc, p) => acc.ok ? acc : p(s), fail())
 
-const alt = <T>(...ps: Parser<T>[]): Parser<T> => s => {
-  for (const p of ps) {
+const many = <T>(p: Parser<T>): Parser<T[]> => {
+  const go = (s: string, acc: T[]): Result<T[]> => {
     const r = p(s)
-    if (r.ok) return r
+    return r.ok ? go(r.rest, [...acc, r.val]) : ok(acc, s)
   }
-  return fail()
-}
-
-const many = <T>(p: Parser<T>): Parser<T[]> => s => {
-  const results: T[] = []
-  let rest = s
-  while (true) {
-    const r = p(rest)
-    if (!r.ok) break
-    results.push(r.val)
-    rest = r.rest
-  }
-  return ok(results, rest)
+  return s => go(s, [])
 }
 
 const lazy = <T>(f: () => Parser<T>): Parser<T> => s => f()(s)
@@ -162,32 +144,30 @@ const between = <T>(open: string, close: string, p: Parser<T>): Parser<T> => s =
   return r3.ok ? ok(r2.val, r3.rest) : fail()
 }
 
-const untilStr = (delim: string): Parser<string> => s => {
-  const idx = s.indexOf(delim)
-  return idx > 0 ? ok(s.slice(0, idx), s.slice(idx)) : fail()
-}
-
-const takeWhile = (pred: (c: string) => boolean): Parser<string> => s => {
-  let i = 0
-  while (i < s.length && pred(s[i])) i++
-  return i > 0 ? ok(s.slice(0, i), s.slice(i)) : fail()
+const takeWhile = (pred: (c: string) => boolean): Parser<string> => {
+  const go = (s: string, i: number): Result<string> =>
+    i < s.length && pred(s[i]) ? go(s, i + 1) : i > 0 ? ok(s.slice(0, i), s.slice(i)) : fail()
+  return s => go(s, 0)
 }
 
 const anyChar: Parser<string> = s => s.length > 0 ? ok(s[0], s.slice(1)) : fail()
 
 const inlineSpecials = new Set(['*', '_', '`', '~', '[', '!', '\\'])
 
-const escapeP: Parser<InlineToken> = map(
-  seq(lit('\\'), anyChar),
-  ([, c]) => ({ tag: 'text', content: c })
-)
+const escapeP: Parser<InlineToken> = map(seq(lit('\\'), anyChar), ([, c]) => ({ tag: 'text', content: c }))
 
-const codeP: Parser<InlineToken> = map(
-  between('`', '`', takeWhile(c => c !== '`')),
-  content => ({ tag: 'code', content })
-)
+const codeP: Parser<InlineToken> = map(between('`', '`', takeWhile(c => c !== '`')), content => ({ tag: 'code', content }))
 
 const inlineTokens: Parser<InlineToken[]> = lazy(() => many(inlineElem))
+
+const untilInline = (delim: string): Parser<InlineToken[]> => {
+  const go = (s: string, acc: InlineToken[]): Result<InlineToken[]> => {
+    if (s.length === 0 || s.startsWith(delim)) return ok(acc, s)
+    const r = inlineElem(s)
+    return r.ok ? go(r.rest, [...acc, r.val]) : ok(acc, s)
+  }
+  return s => go(s, [])
+}
 
 const boldP: Parser<InlineToken> = alt(
   map(between('**', '**', lazy(() => untilInline('**'))), children => ({ tag: 'bold', children })),
@@ -205,8 +185,7 @@ const italicP: Parser<InlineToken> = s => {
   const marker = s[0]
   const end = s.indexOf(marker, 1)
   if (end <= 1) return fail()
-  const inner = s.slice(1, end)
-  const children = parseInlineTokens(inner)
+  const children = parseInlineTokens(s.slice(1, end))
   return ok({ tag: 'italic', children }, s.slice(end + 1))
 }
 
@@ -216,10 +195,7 @@ const imageP: Parser<InlineToken> = s => {
   if (altEnd === -1 || s[altEnd + 1] !== '(') return fail()
   const srcEnd = s.indexOf(')', altEnd + 2)
   if (srcEnd === -1) return fail()
-  return ok(
-    { tag: 'image', alt: s.slice(2, altEnd), src: s.slice(altEnd + 2, srcEnd) },
-    s.slice(srcEnd + 1)
-  )
+  return ok({ tag: 'image', alt: s.slice(2, altEnd), src: s.slice(altEnd + 2, srcEnd) }, s.slice(srcEnd + 1))
 }
 
 const linkP: Parser<InlineToken> = s => {
@@ -229,34 +205,14 @@ const linkP: Parser<InlineToken> = s => {
   const hrefEnd = s.indexOf(')', textEnd + 2)
   if (hrefEnd === -1) return fail()
   const children = parseInlineTokens(s.slice(1, textEnd))
-  return ok(
-    { tag: 'link', children, href: s.slice(textEnd + 2, hrefEnd) },
-    s.slice(hrefEnd + 1)
-  )
+  return ok({ tag: 'link', children, href: s.slice(textEnd + 2, hrefEnd) }, s.slice(hrefEnd + 1))
 }
 
-const plainTextP: Parser<InlineToken> = map(
-  takeWhile(c => !inlineSpecials.has(c)),
-  content => ({ tag: 'text', content })
-)
+const plainTextP: Parser<InlineToken> = map(takeWhile(c => !inlineSpecials.has(c)), content => ({ tag: 'text', content }))
 
 const singleCharP: Parser<InlineToken> = map(anyChar, content => ({ tag: 'text', content }))
 
-const inlineElem: Parser<InlineToken> = alt(
-  escapeP, codeP, boldP, strikeP, italicP, imageP, linkP, plainTextP, singleCharP
-)
-
-const untilInline = (delim: string): Parser<InlineToken[]> => s => {
-  const tokens: InlineToken[] = []
-  let rest = s
-  while (rest.length > 0 && !rest.startsWith(delim)) {
-    const r = inlineElem(rest)
-    if (!r.ok) break
-    tokens.push(r.val)
-    rest = r.rest
-  }
-  return ok(tokens, rest)
-}
+const inlineElem: Parser<InlineToken> = alt(escapeP, codeP, boldP, strikeP, italicP, imageP, linkP, plainTextP, singleCharP)
 
 const parseInlineTokens = (s: string): InlineToken[] => {
   const r = inlineTokens(s)
@@ -266,18 +222,16 @@ const parseInlineTokens = (s: string): InlineToken[] => {
 const mergeTextTokens = (tokens: InlineToken[]): InlineToken[] =>
   tokens.reduce<InlineToken[]>((acc, t) => {
     const last = acc[acc.length - 1]
-    if (t.tag === 'text' && last?.tag === 'text') {
-      acc[acc.length - 1] = { tag: 'text', content: last.content + t.content }
-    } else {
-      acc.push(t)
-    }
-    return acc
+    return t.tag === 'text' && last?.tag === 'text'
+      ? [...acc.slice(0, -1), { tag: 'text', content: last.content + t.content }]
+      : [...acc, t]
   }, [])
 
 const tokensToRuns = (tokens: InlineToken[], inherited: TextOptions = {}): TextRun[] =>
   mergeTextTokens(tokens).flatMap((t): TextRun[] => {
+    const hasOpts = Object.keys(inherited).length > 0
     switch (t.tag) {
-      case 'text': return [{ text: t.content, opts: Object.keys(inherited).length ? { ...inherited } : undefined }]
+      case 'text': return [{ text: t.content, opts: hasOpts ? { ...inherited } : undefined }]
       case 'bold': return tokensToRuns(t.children, { ...inherited, bold: true })
       case 'italic': return tokensToRuns(t.children, { ...inherited, italic: true })
       case 'strike': return tokensToRuns(t.children, { ...inherited, strikethrough: true })
@@ -291,120 +245,140 @@ const tokensToPlainText = (tokens: InlineToken[]): string =>
   tokens.map(t => {
     switch (t.tag) {
       case 'text': case 'code': return t.content
-      case 'bold': case 'italic': case 'strike': return tokensToPlainText(t.children)
-      case 'link': return tokensToPlainText(t.children)
+      case 'bold': case 'italic': case 'strike': case 'link': return tokensToPlainText(t.children)
       case 'image': return t.alt
     }
   }).join('')
 
-const parseBlockLines = (lines: string[]): BlockToken[] => {
-  const blocks: BlockToken[] = []
-  let i = 0
+type LineState = { lines: readonly string[]; idx: number }
 
-  while (i < lines.length) {
-    const line = lines[i]
+const peek = (s: LineState): string | undefined => s.lines[s.idx]
+const advance = (s: LineState): LineState => ({ ...s, idx: s.idx + 1 })
+const isDone = (s: LineState): boolean => s.idx >= s.lines.length
 
-    if (line.trim() === '') { i++; continue }
+const parseCodeBlock = (state: LineState): [BlockToken, LineState] | null => {
+  const line = peek(state)
+  if (!line?.startsWith('```')) return null
+  const lang = line.slice(3).trim() || undefined
+  const collectCode = (s: LineState, acc: string[]): [string[], LineState] => {
+    const l = peek(s)
+    if (l === undefined || l.startsWith('```')) return [acc, advance(s)]
+    return collectCode(advance(s), [...acc, l])
+  }
+  const [codeLines, next] = collectCode(advance(state), [])
+  return [{ tag: 'pre', code: codeLines.join('\n'), lang }, next]
+}
 
-    if (line.startsWith('```')) {
-      const lang = line.slice(3).trim() || undefined
-      const codeLines: string[] = []
-      i++
-      while (i < lines.length && !lines[i].startsWith('```')) {
-        codeLines.push(lines[i])
-        i++
-      }
-      blocks.push({ tag: 'pre', code: codeLines.join('\n'), lang })
-      i++
-      continue
-    }
+const parseHeading = (state: LineState): [BlockToken, LineState] | null => {
+  const line = peek(state)
+  if (!line || !/^#{1,3}\s/.test(line)) return null
+  const m = line.match(/^(#{1,3})\s+(.*)$/)!
+  const level = Math.min(m[1].length, 3) as 1 | 2 | 3
+  return [{ tag: 'h', level, content: parseInlineTokens(m[2]) }, advance(state)]
+}
 
-    if (/^#{1,3}\s/.test(line)) {
-      const m = line.match(/^(#{1,3})\s+(.*)$/)!
-      const level = Math.min(m[1].length, 3) as 1 | 2 | 3
-      blocks.push({ tag: 'h', level, content: parseInlineTokens(m[2]) })
-      i++
-      continue
-    }
+const parseHr = (state: LineState): [BlockToken, LineState] | null => {
+  const line = peek(state)
+  if (!line || !/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) return null
+  return [{ tag: 'hr' }, advance(state)]
+}
 
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
-      blocks.push({ tag: 'hr' })
-      i++
-      continue
-    }
+const parseQuote = (state: LineState): [BlockToken, LineState] | null => {
+  const line = peek(state)
+  if (!line?.startsWith('> ')) return null
+  const collectQuote = (s: LineState, acc: string[]): [string[], LineState] => {
+    const l = peek(s)
+    if (!l?.startsWith('> ')) return [acc, s]
+    return collectQuote(advance(s), [...acc, l.slice(2)])
+  }
+  const [quoteLines, next] = collectQuote(state, [])
+  return [{ tag: 'quote', blocks: parseBlocks({ lines: quoteLines, idx: 0 }) }, next]
+}
 
-    if (line.startsWith('> ')) {
-      const quoteLines: string[] = []
-      while (i < lines.length && lines[i].startsWith('> ')) {
-        quoteLines.push(lines[i].slice(2))
-        i++
-      }
-      blocks.push({ tag: 'quote', blocks: parseBlockLines(quoteLines) })
-      continue
-    }
+const parseTableRow = (r: string): InlineToken[][] =>
+  r.slice(1, -1).split('|').map(c => parseInlineTokens(c.trim()))
 
-    if (/^\|.+\|$/.test(line)) {
-      const parseRow = (r: string) => r.slice(1, -1).split('|').map(c => parseInlineTokens(c.trim()))
-      const head = parseRow(line)
-      i++
-      if (i < lines.length && /^\|[-:| ]+\|$/.test(lines[i])) i++
-      const body: InlineToken[][][] = []
-      while (i < lines.length && /^\|.+\|$/.test(lines[i])) {
-        body.push(parseRow(lines[i]))
-        i++
-      }
-      blocks.push({ tag: 'table', head, body })
-      continue
-    }
+const parseTable = (state: LineState): [BlockToken, LineState] | null => {
+  const line = peek(state)
+  if (!line || !/^\|.+\|$/.test(line)) return null
+  const head = parseTableRow(line)
+  let next = advance(state)
+  const sep = peek(next)
+  if (sep && /^\|[-:| ]+\|$/.test(sep)) next = advance(next)
+  const collectBody = (s: LineState, acc: InlineToken[][][]): [InlineToken[][][], LineState] => {
+    const l = peek(s)
+    if (!l || !/^\|.+\|$/.test(l)) return [acc, s]
+    return collectBody(advance(s), [...acc, parseTableRow(l)])
+  }
+  const [body, final] = collectBody(next, [])
+  return [{ tag: 'table', head, body }, final]
+}
 
-    if (/^(\s*)[-*]\s/.test(line) || /^(\s*)\d+\.\s/.test(line)) {
-      const parseList = (startIdx: number, indent: number): { items: ListNodeItem[]; nextIdx: number } => {
-        const items: ListNodeItem[] = []
-        let idx = startIdx
-        const firstLine = lines[idx]
-        const ordered = /^\s*\d+\./.test(firstLine)
-        const marker = ordered ? /^\s*\d+\.\s/ : /^\s*[-*]\s/
+const parseList = (state: LineState): [BlockToken, LineState] | null => {
+  const line = peek(state)
+  if (!line) return null
+  const isUnordered = /^(\s*)[-*]\s/.test(line)
+  const isOrdered = /^(\s*)\d+\.\s/.test(line)
+  if (!isUnordered && !isOrdered) return null
 
-        while (idx < lines.length) {
-          const l = lines[idx]
-          const spaces = l.match(/^(\s*)/)?.[1].length ?? 0
-          if (spaces < indent && idx !== startIdx) break
-          if (spaces === indent && marker.test(l)) {
-            const text = l.replace(/^\s*[-*]\s|^\s*\d+\.\s/, '')
-            const content = parseInlineTokens(text)
-            idx++
-            let nested: ListNodeItem['nested'] = undefined
-            if (idx < lines.length) {
-              const nextSpaces = lines[idx].match(/^(\s*)/)?.[1].length ?? 0
-              if (nextSpaces > indent && (/^\s*[-*]\s/.test(lines[idx]) || /^\s*\d+\.\s/.test(lines[idx]))) {
-                const sub = parseList(idx, nextSpaces)
-                nested = { ordered: /^\s*\d+\./.test(lines[idx]), items: sub.items }
-                idx = sub.nextIdx
-              }
-            }
-            items.push({ content, nested })
-          } else if (spaces > indent) {
-            idx++
-          } else {
-            break
-          }
+  const getIndent = (l: string): number => l.match(/^(\s*)/)?.[1].length ?? 0
+  const getMarker = (l: string): 'ul' | 'ol' | null =>
+    /^\s*[-*]\s/.test(l) ? 'ul' : /^\s*\d+\.\s/.test(l) ? 'ol' : null
+  const stripMarker = (l: string): string => l.replace(/^\s*[-*]\s|^\s*\d+\.\s/, '')
+
+  const parseItems = (s: LineState, indent: number): [ListNodeItem[], LineState] => {
+    const collectItems = (st: LineState, acc: ListNodeItem[]): [ListNodeItem[], LineState] => {
+      const l = peek(st)
+      if (!l) return [acc, st]
+      const lIndent = getIndent(l)
+      const marker = getMarker(l)
+      if (lIndent < indent) return [acc, st]
+      if (lIndent === indent && marker) {
+        const content = parseInlineTokens(stripMarker(l))
+        let next = advance(st)
+        let nested: ListNodeItem['nested'] = undefined
+        const nextLine = peek(next)
+        if (nextLine && getIndent(nextLine) > indent && getMarker(nextLine)) {
+          const [nestedItems, afterNested] = parseItems(next, getIndent(nextLine))
+          nested = { ordered: getMarker(nextLine) === 'ol', items: nestedItems }
+          next = afterNested
         }
-        return { items, nextIdx: idx }
+        return collectItems(next, [...acc, { content, nested }])
       }
-
-      const indent = line.match(/^(\s*)/)?.[1].length ?? 0
-      const result = parseList(i, indent)
-      const ordered = /^\s*\d+\./.test(line)
-      blocks.push(ordered ? { tag: 'ol', items: result.items } : { tag: 'ul', items: result.items })
-      i = result.nextIdx
-      continue
+      if (lIndent > indent) return collectItems(advance(st), acc)
+      return [acc, st]
     }
-
-    blocks.push({ tag: 'p', content: parseInlineTokens(line) })
-    i++
+    return collectItems(s, [])
   }
 
-  return blocks
+  const indent = getIndent(line)
+  const [items, next] = parseItems(state, indent)
+  const ordered = isOrdered
+  return [ordered ? { tag: 'ol', items } : { tag: 'ul', items }, next]
+}
+
+const parseParagraph = (state: LineState): [BlockToken, LineState] | null => {
+  const line = peek(state)
+  if (!line || line.trim() === '') return null
+  return [{ tag: 'p', content: parseInlineTokens(line) }, advance(state)]
+}
+
+const parseBlocks = (state: LineState): BlockToken[] => {
+  const go = (s: LineState, acc: BlockToken[]): BlockToken[] => {
+    if (isDone(s)) return acc
+    const line = peek(s)
+    if (line?.trim() === '') return go(advance(s), acc)
+    const parsers = [parseCodeBlock, parseHeading, parseHr, parseQuote, parseTable, parseList, parseParagraph]
+    for (const parser of parsers) {
+      const result = parser(s)
+      if (result) {
+        const [block, next] = result
+        return go(next, [...acc, block])
+      }
+    }
+    return go(advance(s), acc)
+  }
+  return go(state, [])
 }
 
 const listNodeToListItem = (node: ListNodeItem): ListItem => ({
@@ -425,29 +399,20 @@ const blockToElement = (b: BlockToken): DocElement[] => {
   }
 }
 
-const parseMarkdownAST = (md: string): BlockToken[] => parseBlockLines(md.replace(/\r\n/g, '\n').split('\n'))
+const parseMarkdownAST = (md: string): BlockToken[] =>
+  parseBlocks({ lines: md.replace(/\r\n/g, '\n').split('\n'), idx: 0 })
 
 const astToElements = (blocks: BlockToken[]): DocElement[] => blocks.flatMap(blockToElement)
 
-function crc32(data: Uint8Array): number {
-  let crc = 0xffffffff
-  for (let i = 0; i < data.length; i++) {
-    crc ^= data[i]
-    for (let j = 0; j < 8; j++) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0
-}
+const crc32Table = Array.from({ length: 256 }, (_, i) =>
+  Array.from({ length: 8 }).reduce<number>((c) => (c >>> 1) ^ (c & 1 ? 0xedb88320 : 0), i)
+)
 
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
+const crc32 = (data: Uint8Array): number =>
+  (data.reduce((crc, byte) => crc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8), 0xffffffff) ^ 0xffffffff) >>> 0
+
+const escapeXml = (str: string): string =>
+  str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 
 /**
  * Centralized XML namespace registry.
@@ -471,79 +436,78 @@ const NS = {
   xlink: 'http://www.w3.org/1999/xlink',
 } as const
 
-function createZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
-  const entries: { name: Uint8Array; data: Uint8Array; crc: number; offset: number }[] = []
-  const parts: Uint8Array[] = []
-  let offset = 0
+type ZipEntry = { name: string; data: Uint8Array }
 
-  for (const file of files) {
-    const nameBytes = new TextEncoder().encode(file.name)
-    const crc = crc32(file.data)
-    const header = new Uint8Array(30 + nameBytes.length)
+const concatBytes = (arrays: Uint8Array[]): Uint8Array => {
+  const total = arrays.reduce((sum, a) => sum + a.length, 0)
+  const result = new Uint8Array(total)
+  arrays.reduce((offset, arr) => { result.set(arr, offset); return offset + arr.length }, 0)
+  return result
+}
+
+const createZip = (files: ZipEntry[]): Uint8Array => {
+  const enc = new TextEncoder()
+
+  const makeLocalHeader = (name: Uint8Array, data: Uint8Array, crc: number): Uint8Array => {
+    const header = new Uint8Array(30 + name.length)
     const view = new DataView(header.buffer)
     view.setUint32(0, 0x04034b50, true)
     view.setUint16(4, 20, true)
-    view.setUint16(6, 0, true)
-    view.setUint16(8, 0, true)
-    view.setUint16(10, 0, true)
-    view.setUint16(12, 0, true)
+    view.setUint16(26, name.length, true)
     view.setUint32(14, crc, true)
-    view.setUint32(18, file.data.length, true)
-    view.setUint32(22, file.data.length, true)
-    view.setUint16(26, nameBytes.length, true)
-    view.setUint16(28, 0, true)
-    header.set(nameBytes, 30)
-    entries.push({ name: nameBytes, data: file.data, crc, offset })
-    parts.push(header, file.data)
-    offset += header.length + file.data.length
+    view.setUint32(18, data.length, true)
+    view.setUint32(22, data.length, true)
+    header.set(name, 30)
+    return header
   }
 
-  const centralDirOffset = offset
-  for (const entry of entries) {
-    const central = new Uint8Array(46 + entry.name.length)
+  const makeCentralHeader = (name: Uint8Array, data: Uint8Array, crc: number, offset: number): Uint8Array => {
+    const central = new Uint8Array(46 + name.length)
     const view = new DataView(central.buffer)
     view.setUint32(0, 0x02014b50, true)
     view.setUint16(4, 20, true)
     view.setUint16(6, 20, true)
-    view.setUint16(8, 0, true)
-    view.setUint16(10, 0, true)
-    view.setUint16(12, 0, true)
-    view.setUint16(14, 0, true)
-    view.setUint32(16, entry.crc, true)
-    view.setUint32(20, entry.data.length, true)
-    view.setUint32(24, entry.data.length, true)
-    view.setUint16(28, entry.name.length, true)
-    view.setUint16(30, 0, true)
-    view.setUint16(32, 0, true)
-    view.setUint16(34, 0, true)
-    view.setUint16(36, 0, true)
-    view.setUint32(38, 0, true)
-    view.setUint32(42, entry.offset, true)
-    central.set(entry.name, 46)
-    parts.push(central)
-    offset += central.length
+    view.setUint32(16, crc, true)
+    view.setUint32(20, data.length, true)
+    view.setUint32(24, data.length, true)
+    view.setUint16(28, name.length, true)
+    view.setUint32(42, offset, true)
+    central.set(name, 46)
+    return central
   }
 
-  const endRecord = new Uint8Array(22)
-  const endView = new DataView(endRecord.buffer)
-  endView.setUint32(0, 0x06054b50, true)
-  endView.setUint16(4, 0, true)
-  endView.setUint16(6, 0, true)
-  endView.setUint16(8, entries.length, true)
-  endView.setUint16(10, entries.length, true)
-  endView.setUint32(12, offset - centralDirOffset, true)
-  endView.setUint32(16, centralDirOffset, true)
-  endView.setUint16(20, 0, true)
-  parts.push(endRecord)
-
-  const totalLength = parts.reduce((sum, p) => sum + p.length, 0)
-  const result = new Uint8Array(totalLength)
-  let pos = 0
-  for (const part of parts) {
-    result.set(part, pos)
-    pos += part.length
+  const makeEndRecord = (count: number, centralSize: number, centralOffset: number): Uint8Array => {
+    const end = new Uint8Array(22)
+    const view = new DataView(end.buffer)
+    view.setUint32(0, 0x06054b50, true)
+    view.setUint16(8, count, true)
+    view.setUint16(10, count, true)
+    view.setUint32(12, centralSize, true)
+    view.setUint32(16, centralOffset, true)
+    return end
   }
-  return result
+
+  type EntryInfo = { name: Uint8Array; data: Uint8Array; crc: number; offset: number }
+
+  const { entries, localParts, offset } = files.reduce<{ entries: EntryInfo[]; localParts: Uint8Array[]; offset: number }>(
+    (acc, file) => {
+      const name = enc.encode(file.name)
+      const crc = crc32(file.data)
+      const header = makeLocalHeader(name, file.data, crc)
+      return {
+        entries: [...acc.entries, { name, data: file.data, crc, offset: acc.offset }],
+        localParts: [...acc.localParts, header, file.data],
+        offset: acc.offset + header.length + file.data.length
+      }
+    },
+    { entries: [], localParts: [], offset: 0 }
+  )
+
+  const centralParts = entries.map(e => makeCentralHeader(e.name, e.data, e.crc, e.offset))
+  const centralSize = centralParts.reduce((sum, p) => sum + p.length, 0)
+  const endRecord = makeEndRecord(entries.length, centralSize, offset)
+
+  return concatBytes([...localParts, ...centralParts, endRecord])
 }
 
 interface BuildContext {
@@ -554,241 +518,134 @@ interface BuildContext {
   nextDocPrId: { value: number }
 }
 
-function createContext(ctx: BuildContext): DocContext {
-  return {
-    heading(str: string, level: 1 | 2 | 3) {
-      ctx.elements.push({ type: 'heading', text: str, level })
-    },
-    paragraph(str: string, opts?: TextOptions) {
-      ctx.elements.push({ type: 'paragraph', text: str, opts })
-    },
-    text(str: string, size: number, opts?: TextOptions) {
-      ctx.elements.push({ type: 'text', text: str, size, opts })
-    },
-    lineBreak() {
-      ctx.elements.push({ type: 'lineBreak' })
-    },
-    horizontalRule() {
-      ctx.elements.push({ type: 'horizontalRule' })
-    },
-    list(items: string[], ordered = false) {
-      ctx.elements.push({ type: 'list', items, ordered })
-    },
-    table(rows: string[][], opts?: TableOptions) {
-      ctx.elements.push({ type: 'table', rows, opts })
-    },
-    link(text: string, url: string, opts?: TextOptions) {
-      const rId = `rId${ctx.nextRId++}`
-      ctx.hyperlinks.push({ url, rId })
-      ctx.elements.push({ type: 'link', text, url, opts, rId })
-    },
-    image(data: Uint8Array, opts: ImageOptions) {
-      const rId = `rId${ctx.nextRId++}`
-      const docPrId = ctx.nextDocPrId.value++
-      const ext = detectImageType(data)
-      ctx.images.push({ data, rId, ext })
-      ctx.elements.push({ type: 'image', data, opts, rId, docPrId })
-    },
-    pageNumber() {
-      ctx.elements.push({ type: 'pageNumber' })
-    }
-  }
-}
+const detectImageType = (data: Uint8Array): string =>
+  data[0] === 0x89 && data[1] === 0x50 ? 'png' :
+  data[0] === 0xff && data[1] === 0xd8 ? 'jpeg' :
+  data[0] === 0x47 && data[1] === 0x49 ? 'gif' :
+  data[0] === 0x52 && data[1] === 0x49 && data[8] === 0x57 && data[9] === 0x45 ? 'webp' : 'png'
 
-function detectImageType(data: Uint8Array): string {
-  if (data[0] === 0x89 && data[1] === 0x50) return 'png'
-  if (data[0] === 0xff && data[1] === 0xd8) return 'jpeg'
-  if (data[0] === 0x47 && data[1] === 0x49) return 'gif'
-  if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
-      data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50) return 'webp'
-  return 'png'
-}
+const createContext = (ctx: BuildContext): DocContext => ({
+  heading: (str, level) => { ctx.elements.push({ type: 'heading', text: str, level }) },
+  paragraph: (str, opts) => { ctx.elements.push({ type: 'paragraph', text: str, opts }) },
+  text: (str, size, opts) => { ctx.elements.push({ type: 'text', text: str, size, opts }) },
+  lineBreak: () => { ctx.elements.push({ type: 'lineBreak' }) },
+  horizontalRule: () => { ctx.elements.push({ type: 'horizontalRule' }) },
+  list: (items, ordered = false) => { ctx.elements.push({ type: 'list', items, ordered }) },
+  table: (rows, opts) => { ctx.elements.push({ type: 'table', rows, opts }) },
+  link: (text, url, opts) => {
+    const rId = `rId${ctx.nextRId++}`
+    ctx.hyperlinks.push({ url, rId })
+    ctx.elements.push({ type: 'link', text, url, opts, rId })
+  },
+  image: (data, opts) => {
+    const rId = `rId${ctx.nextRId++}`
+    const docPrId = ctx.nextDocPrId.value++
+    const ext = detectImageType(data)
+    ctx.images.push({ data, rId, ext })
+    ctx.elements.push({ type: 'image', data, opts, rId, docPrId })
+  },
+  pageNumber: () => { ctx.elements.push({ type: 'pageNumber' }) }
+})
 
-function buildDocxRunProps(opts?: TextOptions, size?: number): string {
-  let rPr = ''
+const buildDocxRunProps = (opts?: TextOptions, size?: number): string => {
+  const parts: string[] = []
   const font = opts?.code ? 'Courier New' : opts?.font
-  if (font) rPr += `<w:rFonts w:ascii="${font}" w:hAnsi="${font}"/>`
+  if (font) parts.push(`<w:rFonts w:ascii="${font}" w:hAnsi="${font}"/>`)
   const sz = size || opts?.size
-  if (sz) rPr += `<w:sz w:val="${sz * 2}"/><w:szCs w:val="${sz * 2}"/>`
-  if (opts?.bold) rPr += '<w:b/>'
-  if (opts?.italic) rPr += '<w:i/>'
-  if (opts?.underline) rPr += '<w:u w:val="single"/>'
-  if (opts?.strikethrough) rPr += '<w:strike/>'
-  if (opts?.code) rPr += '<w:shd w:val="clear" w:color="auto" w:fill="E8E8E8"/>'
-  if (opts?.color) rPr += `<w:color w:val="${opts.color.replace('#', '')}"/>`
-  return rPr ? `<w:rPr>${rPr}</w:rPr>` : ''
+  if (sz) parts.push(`<w:sz w:val="${sz * 2}"/><w:szCs w:val="${sz * 2}"/>`)
+  if (opts?.bold) parts.push('<w:b/>')
+  if (opts?.italic) parts.push('<w:i/>')
+  if (opts?.underline) parts.push('<w:u w:val="single"/>')
+  if (opts?.strikethrough) parts.push('<w:strike/>')
+  if (opts?.code) parts.push('<w:shd w:val="clear" w:color="auto" w:fill="E8E8E8"/>')
+  if (opts?.color) parts.push(`<w:color w:val="${opts.color.replace('#', '')}"/>`)
+  return parts.length > 0 ? `<w:rPr>${parts.join('')}</w:rPr>` : ''
 }
 
-function getAlignment(align?: string): string {
-  return align === 'center' ? 'center' : align === 'right' ? 'right' : align === 'justify' ? 'both' : 'left'
-}
+const getAlignment = (align?: string): string =>
+  align === 'center' ? 'center' : align === 'right' ? 'right' : align === 'justify' ? 'both' : 'left'
 
 const parseInline = (text: string): TextRun[] => tokensToRuns(parseInlineTokens(text))
 
-function buildDocxBody(elements: DocElement[]): string {
-  const SIZES = { 1: 48, 2: 36, 3: 28 }
-  let body = ''
+const buildDocxRuns = (runs: TextRun[]): string =>
+  runs.map(run => `<w:r>${buildDocxRunProps(run.opts)}<w:t>${escapeXml(run.text)}</w:t></w:r>`).join('')
 
-  for (const el of elements) {
-    if (el.type === 'heading') {
-      const sz = SIZES[el.level]
-      body += `<w:p><w:pPr><w:pStyle w:val="Heading${el.level}"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr><w:t>${escapeXml(el.text)}</w:t></w:r></w:p>`
-    } else if (el.type === 'paragraph') {
-      const jc = getAlignment(el.opts?.align)
-      const rPr = buildDocxRunProps(el.opts)
-      body += `<w:p><w:pPr><w:jc w:val="${jc}"/></w:pPr><w:r>${rPr}<w:t>${escapeXml(el.text)}</w:t></w:r></w:p>`
-    } else if (el.type === 'text') {
-      const jc = getAlignment(el.opts?.align)
-      const rPr = buildDocxRunProps(el.opts, el.size)
-      body += `<w:p><w:pPr><w:jc w:val="${jc}"/></w:pPr><w:r>${rPr}<w:t>${escapeXml(el.text)}</w:t></w:r></w:p>`
-    } else if (el.type === 'lineBreak') {
-      body += '<w:p/>'
-    } else if (el.type === 'horizontalRule') {
-      body += '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr></w:p>'
-    } else if (el.type === 'list') {
-      const numId = el.ordered ? 2 : 1
-      for (const item of el.items) {
-        body += `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${numId}"/></w:numPr></w:pPr><w:r><w:t>${escapeXml(item)}</w:t></w:r></w:p>`
-      }
-    } else if (el.type === 'table') {
-      body += '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>'
-      body += '<w:top w:val="single" w:sz="4" w:color="auto"/><w:left w:val="single" w:sz="4" w:color="auto"/>'
-      body += '<w:bottom w:val="single" w:sz="4" w:color="auto"/><w:right w:val="single" w:sz="4" w:color="auto"/>'
-      body += '<w:insideH w:val="single" w:sz="4" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:color="auto"/>'
-      body += '</w:tblBorders></w:tblPr>'
-      if (el.opts?.colWidths) {
-        body += '<w:tblGrid>'
-        for (const w of el.opts.colWidths) body += `<w:gridCol w:w="${w}"/>`
-        body += '</w:tblGrid>'
-      }
-      for (const row of el.rows) {
-        body += '<w:tr>'
-        for (let i = 0; i < row.length; i++) {
-          body += '<w:tc>'
-          if (el.opts?.colWidths?.[i]) {
-            body += `<w:tcPr><w:tcW w:w="${el.opts.colWidths[i]}" w:type="dxa"/></w:tcPr>`
-          }
-          body += `<w:p><w:r><w:t>${escapeXml(row[i])}</w:t></w:r></w:p></w:tc>`
-        }
-        body += '</w:tr>'
-      }
-      body += '</w:tbl>'
-    } else if (el.type === 'link') {
-      const rPr = buildDocxRunProps({ ...el.opts, color: el.opts?.color || '0563C1', underline: true })
-      body += `<w:p><w:hyperlink r:id="${el.rId}"><w:r>${rPr}<w:t>${escapeXml(el.text)}</w:t></w:r></w:hyperlink></w:p>`
-    } else if (el.type === 'image') {
+const buildDocxListItems = (items: ListItem[], ordered: boolean, level: number): string =>
+  items.flatMap(item => [
+    `<w:p><w:pPr><w:numPr><w:ilvl w:val="${level}"/><w:numId w:val="${ordered ? 2 : 1}"/></w:numPr></w:pPr>${buildDocxRuns(item.runs)}</w:p>`,
+    ...(item.children ? [buildDocxListItems(item.children.items, item.children.ordered, level + 1)] : [])
+  ]).join('')
+
+const HEADING_SIZES: Record<1 | 2 | 3, number> = { 1: 48, 2: 36, 3: 28 }
+
+const TABLE_BORDERS = '<w:top w:val="single" w:sz="4" w:color="auto"/><w:left w:val="single" w:sz="4" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:color="auto"/><w:right w:val="single" w:sz="4" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:color="auto"/>'
+
+const elementToDocx = (el: DocElement): string => {
+  switch (el.type) {
+    case 'heading': {
+      const sz = HEADING_SIZES[el.level]
+      return `<w:p><w:pPr><w:pStyle w:val="Heading${el.level}"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr><w:t>${escapeXml(el.text)}</w:t></w:r></w:p>`
+    }
+    case 'paragraph':
+      return `<w:p><w:pPr><w:jc w:val="${getAlignment(el.opts?.align)}"/></w:pPr><w:r>${buildDocxRunProps(el.opts)}<w:t>${escapeXml(el.text)}</w:t></w:r></w:p>`
+    case 'text':
+      return `<w:p><w:pPr><w:jc w:val="${getAlignment(el.opts?.align)}"/></w:pPr><w:r>${buildDocxRunProps(el.opts, el.size)}<w:t>${escapeXml(el.text)}</w:t></w:r></w:p>`
+    case 'lineBreak':
+      return '<w:p/>'
+    case 'horizontalRule':
+      return '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr></w:p>'
+    case 'list':
+      return el.items.map(item => `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${el.ordered ? 2 : 1}"/></w:numPr></w:pPr><w:r><w:t>${escapeXml(item)}</w:t></w:r></w:p>`).join('')
+    case 'table': {
+      const grid = el.opts?.colWidths ? `<w:tblGrid>${el.opts.colWidths.map(w => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>` : ''
+      const rows = el.rows.map(row => `<w:tr>${row.map((cell, i) => `<w:tc>${el.opts?.colWidths?.[i] ? `<w:tcPr><w:tcW w:w="${el.opts.colWidths[i]}" w:type="dxa"/></w:tcPr>` : ''}<w:p><w:r><w:t>${escapeXml(cell)}</w:t></w:r></w:p></w:tc>`).join('')}</w:tr>`).join('')
+      return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${TABLE_BORDERS}</w:tblBorders></w:tblPr>${grid}${rows}</w:tbl>`
+    }
+    case 'link':
+      return `<w:p><w:hyperlink r:id="${el.rId}"><w:r>${buildDocxRunProps({ ...el.opts, color: el.opts?.color || '0563C1', underline: true })}<w:t>${escapeXml(el.text)}</w:t></w:r></w:hyperlink></w:p>`
+    case 'image': {
       const cx = Math.round(el.opts.width * 914400)
       const cy = Math.round(el.opts.height * 914400)
-      body += `<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="${NS.wp}"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${el.docPrId}" name="Image${el.docPrId}"/><a:graphic xmlns:a="${NS.a}"><a:graphicData uri="${NS.pic}"><pic:pic xmlns:pic="${NS.pic}"><pic:nvPicPr><pic:cNvPr id="${el.docPrId}" name="Image${el.docPrId}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${el.rId}" xmlns:r="${NS.r}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
-    } else if (el.type === 'pageNumber') {
-      body += '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
-    } else if (el.type === 'richParagraph') {
-      const jc = getAlignment(el.align)
-      body += `<w:p><w:pPr><w:jc w:val="${jc}"/></w:pPr>`
-      for (const run of el.runs) {
-        const rPr = buildDocxRunProps(run.opts)
-        body += `<w:r>${rPr}<w:t>${escapeXml(run.text)}</w:t></w:r>`
-      }
-      body += '</w:p>'
-    } else if (el.type === 'richList') {
-      const buildListItems = (items: ListItem[], ordered: boolean, level: number) => {
-        const numId = ordered ? 2 : 1
-        for (const item of items) {
-          body += `<w:p><w:pPr><w:numPr><w:ilvl w:val="${level}"/><w:numId w:val="${numId}"/></w:numPr></w:pPr>`
-          for (const run of item.runs) {
-            const rPr = buildDocxRunProps(run.opts)
-            body += `<w:r>${rPr}<w:t>${escapeXml(run.text)}</w:t></w:r>`
-          }
-          body += '</w:p>'
-          if (item.children) {
-            buildListItems(item.children.items, item.children.ordered, level + 1)
-          }
-        }
-      }
-      buildListItems(el.items, el.ordered, 0)
-    } else if (el.type === 'richTable') {
-      body += '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>'
-      body += '<w:top w:val="single" w:sz="4" w:color="auto"/><w:left w:val="single" w:sz="4" w:color="auto"/>'
-      body += '<w:bottom w:val="single" w:sz="4" w:color="auto"/><w:right w:val="single" w:sz="4" w:color="auto"/>'
-      body += '<w:insideH w:val="single" w:sz="4" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:color="auto"/>'
-      body += '</w:tblBorders></w:tblPr>'
-      if (el.opts?.colWidths) {
-        body += '<w:tblGrid>'
-        for (const w of el.opts.colWidths) body += `<w:gridCol w:w="${w}"/>`
-        body += '</w:tblGrid>'
-      }
-      for (const row of el.rows) {
-        body += '<w:tr>'
-        for (let i = 0; i < row.length; i++) {
-          body += '<w:tc>'
-          if (el.opts?.colWidths?.[i]) {
-            body += `<w:tcPr><w:tcW w:w="${el.opts.colWidths[i]}" w:type="dxa"/></w:tcPr>`
-          }
-          body += '<w:p>'
-          for (const run of row[i]) {
-            const rPr = buildDocxRunProps(run.opts)
-            body += `<w:r>${rPr}<w:t>${escapeXml(run.text)}</w:t></w:r>`
-          }
-          body += '</w:p></w:tc>'
-        }
-        body += '</w:tr>'
-      }
-      body += '</w:tbl>'
-    } else if (el.type === 'blockquote') {
-      body += '<w:p><w:pPr><w:ind w:left="720"/><w:pBdr><w:left w:val="single" w:sz="18" w:space="4" w:color="CCCCCC"/></w:pBdr></w:pPr>'
-      for (const run of el.runs) {
-        const rPr = buildDocxRunProps({ ...run.opts, color: run.opts?.color || '#666666' })
-        body += `<w:r>${rPr}<w:t>${escapeXml(run.text)}</w:t></w:r>`
-      }
-      body += '</w:p>'
-    } else if (el.type === 'codeBlock') {
-      const lines = el.code.split('\n')
-      for (const line of lines) {
-        body += '<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F5F5F5"/></w:pPr>'
-        body += `<w:r><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
-      }
+      return `<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="${NS.wp}"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${el.docPrId}" name="Image${el.docPrId}"/><a:graphic xmlns:a="${NS.a}"><a:graphicData uri="${NS.pic}"><pic:pic xmlns:pic="${NS.pic}"><pic:nvPicPr><pic:cNvPr id="${el.docPrId}" name="Image${el.docPrId}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${el.rId}" xmlns:r="${NS.r}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
     }
+    case 'pageNumber':
+      return '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+    case 'richParagraph':
+      return `<w:p><w:pPr><w:jc w:val="${getAlignment(el.align)}"/></w:pPr>${buildDocxRuns(el.runs)}</w:p>`
+    case 'richList':
+      return buildDocxListItems(el.items, el.ordered, 0)
+    case 'richTable': {
+      const grid = el.opts?.colWidths ? `<w:tblGrid>${el.opts.colWidths.map(w => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>` : ''
+      const rows = el.rows.map(row => `<w:tr>${row.map((cell, i) => `<w:tc>${el.opts?.colWidths?.[i] ? `<w:tcPr><w:tcW w:w="${el.opts.colWidths[i]}" w:type="dxa"/></w:tcPr>` : ''}<w:p>${buildDocxRuns(cell)}</w:p></w:tc>`).join('')}</w:tr>`).join('')
+      return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${TABLE_BORDERS}</w:tblBorders></w:tblPr>${grid}${rows}</w:tbl>`
+    }
+    case 'blockquote':
+      return `<w:p><w:pPr><w:ind w:left="720"/><w:pBdr><w:left w:val="single" w:sz="18" w:space="4" w:color="CCCCCC"/></w:pBdr></w:pPr>${el.runs.map(run => `<w:r>${buildDocxRunProps({ ...run.opts, color: run.opts?.color || '#666666' })}<w:t>${escapeXml(run.text)}</w:t></w:r>`).join('')}</w:p>`
+    case 'codeBlock':
+      return el.code.split('\n').map(line => `<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F5F5F5"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`).join('')
   }
-  return body
 }
 
-function generateDocxDocument(elements: DocElement[], headerRId?: string, footerRId?: string): string {
+const buildDocxBody = (elements: DocElement[]): string => elements.map(elementToDocx).join('')
+
+const generateDocxDocument = (elements: DocElement[], headerRId?: string, footerRId?: string): string => {
   const body = buildDocxBody(elements)
-
-  let sectPr = '<w:sectPr>'
-  if (headerRId) sectPr += `<w:headerReference w:type="default" r:id="${headerRId}"/>`
-  if (footerRId) sectPr += `<w:footerReference w:type="default" r:id="${footerRId}"/>`
-  sectPr += '<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/></w:sectPr>'
-
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}">
-<w:body>
-${body}
-${sectPr}
-</w:body>
-</w:document>`
+  const sectPr = [
+    '<w:sectPr>',
+    headerRId ? `<w:headerReference w:type="default" r:id="${headerRId}"/>` : '',
+    footerRId ? `<w:footerReference w:type="default" r:id="${footerRId}"/>` : '',
+    '<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/></w:sectPr>'
+  ].join('')
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}">\n<w:body>\n${body}\n${sectPr}\n</w:body>\n</w:document>`
 }
 
-function generateDocxHeader(elements: DocElement[], hasLinksOrImages: boolean): string {
-  const body = buildDocxBody(elements)
-  const rAttr = hasLinksOrImages ? ` xmlns:r="${NS.r}"` : ''
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:hdr xmlns:w="${NS.w}"${rAttr}>
-${body}
-</w:hdr>`
-}
+const generateDocxHeader = (elements: DocElement[], hasLinksOrImages: boolean): string =>
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:hdr xmlns:w="${NS.w}"${hasLinksOrImages ? ` xmlns:r="${NS.r}"` : ''}>\n${buildDocxBody(elements)}\n</w:hdr>`
 
-function generateDocxFooter(elements: DocElement[], hasLinksOrImages: boolean): string {
-  const body = buildDocxBody(elements)
-  const rAttr = hasLinksOrImages ? ` xmlns:r="${NS.r}"` : ''
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:ftr xmlns:w="${NS.w}"${rAttr}>
-${body}
-</w:ftr>`
-}
+const generateDocxFooter = (elements: DocElement[], hasLinksOrImages: boolean): string =>
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr xmlns:w="${NS.w}"${hasLinksOrImages ? ` xmlns:r="${NS.r}"` : ''}>\n${buildDocxBody(elements)}\n</w:ftr>`
 
-function generateDocxStyles(): string {
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+const generateDocxStyles = (): string => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="${NS.w}">
 <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
@@ -796,99 +653,63 @@ function generateDocxStyles(): string {
 <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="Heading 2"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="36"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="Heading 3"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
 </w:styles>`
-}
 
-function generateDocxNumbering(): string {
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+const generateDocxNumbering = (): string => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:numbering xmlns:w="${NS.w}">
 <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>
 <w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>
 <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
 <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
 </w:numbering>`
+
+const generateDocxContentTypes = (hasLists: boolean, hasHeader: boolean, hasFooter: boolean, imageExts: string[]): string => {
+  const defaults = [
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+    '<Default Extension="xml" ContentType="application/xml"/>',
+    ...Array.from(new Set(imageExts)).map(ext => {
+      const mime = ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'image/png'
+      return `<Default Extension="${ext}" ContentType="${mime}"/>`
+    })
+  ]
+  const overrides = [
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+    '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>',
+    ...(hasLists ? ['<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>'] : []),
+    ...(hasHeader ? ['<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>'] : []),
+    ...(hasFooter ? ['<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>'] : [])
+  ]
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="${NS.ct}">\n${[...defaults, ...overrides].join('\n')}\n</Types>`
 }
 
-function generateDocxContentTypes(hasLists: boolean, hasHeader: boolean, hasFooter: boolean, imageExts: string[]): string {
-  let types = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="${NS.ct}">
-<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-<Default Extension="xml" ContentType="application/xml"/>`
-
-  for (const ext of Array.from(new Set(imageExts))) {
-    const mime = ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'image/png'
-    types += `<Default Extension="${ext}" ContentType="${mime}"/>`
-  }
-
-  types += `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>`
-
-  if (hasLists) {
-    types += `<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>`
-  }
-  if (hasHeader) {
-    types += `<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`
-  }
-  if (hasFooter) {
-    types += `<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>`
-  }
-
-  types += `</Types>`
-  return types
-}
-
-function generateDocxRels(
+const generateDocxRels = (
   hasLists: boolean,
   hasHeader: boolean,
   hasFooter: boolean,
   hyperlinks: { url: string; rId: string }[],
   images: { rId: string; ext: string }[],
   imageOffset: number
-): string {
-  let rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="${NS.rel}">
-<Relationship Id="rId1" Type="${NS.r}/styles" Target="styles.xml"/>`
-
-  let nextId = 2
-  if (hasLists) {
-    rels += `<Relationship Id="rId${nextId++}" Type="${NS.r}/numbering" Target="numbering.xml"/>`
-  }
-  if (hasHeader) {
-    rels += `<Relationship Id="rIdHeader" Type="${NS.r}/header" Target="header1.xml"/>`
-  }
-  if (hasFooter) {
-    rels += `<Relationship Id="rIdFooter" Type="${NS.r}/footer" Target="footer1.xml"/>`
-  }
-
-  for (const link of hyperlinks) {
-    rels += `<Relationship Id="${link.rId}" Type="${NS.r}/hyperlink" Target="${escapeXml(link.url)}" TargetMode="External"/>`
-  }
-
-  for (let i = 0; i < images.length; i++) {
-    rels += `<Relationship Id="${images[i].rId}" Type="${NS.r}/image" Target="media/image${imageOffset + i + 1}.${images[i].ext}"/>`
-  }
-
-  rels += `</Relationships>`
-  return rels
+): string => {
+  const rels = [
+    `<Relationship Id="rId1" Type="${NS.r}/styles" Target="styles.xml"/>`,
+    ...(hasLists ? [`<Relationship Id="rId2" Type="${NS.r}/numbering" Target="numbering.xml"/>`] : []),
+    ...(hasHeader ? [`<Relationship Id="rIdHeader" Type="${NS.r}/header" Target="header1.xml"/>`] : []),
+    ...(hasFooter ? [`<Relationship Id="rIdFooter" Type="${NS.r}/footer" Target="footer1.xml"/>`] : []),
+    ...hyperlinks.map(link => `<Relationship Id="${link.rId}" Type="${NS.r}/hyperlink" Target="${escapeXml(link.url)}" TargetMode="External"/>`),
+    ...images.map((img, i) => `<Relationship Id="${img.rId}" Type="${NS.r}/image" Target="media/image${imageOffset + i + 1}.${img.ext}"/>`)
+  ]
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${NS.rel}">\n${rels.join('\n')}\n</Relationships>`
 }
 
-function generatePartRels(
+const generatePartRels = (
   hyperlinks: { url: string; rId: string }[],
   images: { rId: string; ext: string }[],
   imageOffset: number
-): string {
-  let rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="${NS.rel}">`
-
-  for (const link of hyperlinks) {
-    rels += `<Relationship Id="${link.rId}" Type="${NS.r}/hyperlink" Target="${escapeXml(link.url)}" TargetMode="External"/>`
-  }
-
-  for (let i = 0; i < images.length; i++) {
-    rels += `<Relationship Id="${images[i].rId}" Type="${NS.r}/image" Target="media/image${imageOffset + i + 1}.${images[i].ext}"/>`
-  }
-
-  rels += `</Relationships>`
-  return rels
+): string => {
+  const rels = [
+    ...hyperlinks.map(link => `<Relationship Id="${link.rId}" Type="${NS.r}/hyperlink" Target="${escapeXml(link.url)}" TargetMode="External"/>`),
+    ...images.map((img, i) => `<Relationship Id="${img.rId}" Type="${NS.r}/image" Target="media/image${imageOffset + i + 1}.${img.ext}"/>`)
+  ]
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${NS.rel}">\n${rels.join('\n')}\n</Relationships>`
 }
 
 const DOCX_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -927,43 +748,27 @@ export function docx(): DOCXBuilder {
       const hasLists = mainCtx.elements.some(el => el.type === 'list')
       const allImages = [...mainCtx.images, ...headerCtx.images, ...footerCtx.images]
       const imageExts = allImages.map(img => img.ext)
-
       const mainImageOffset = 0
       const headerImageOffset = mainCtx.images.length
       const footerImageOffset = mainCtx.images.length + headerCtx.images.length
 
-      const files: { name: string; data: Uint8Array }[] = [
+      const files: ZipEntry[] = [
         { name: '[Content_Types].xml', data: enc.encode(generateDocxContentTypes(hasLists, hasHeader, hasFooter, imageExts)) },
         { name: '_rels/.rels', data: enc.encode(DOCX_RELS) },
         { name: 'word/_rels/document.xml.rels', data: enc.encode(generateDocxRels(hasLists, hasHeader, hasFooter, mainCtx.hyperlinks, mainCtx.images, mainImageOffset)) },
         { name: 'word/document.xml', data: enc.encode(generateDocxDocument(mainCtx.elements, hasHeader ? 'rIdHeader' : undefined, hasFooter ? 'rIdFooter' : undefined)) },
-        { name: 'word/styles.xml', data: enc.encode(generateDocxStyles()) }
+        { name: 'word/styles.xml', data: enc.encode(generateDocxStyles()) },
+        ...(hasLists ? [{ name: 'word/numbering.xml', data: enc.encode(generateDocxNumbering()) }] : []),
+        ...(hasHeader ? [
+          { name: 'word/header1.xml', data: enc.encode(generateDocxHeader(headerCtx.elements, headerCtx.hyperlinks.length > 0 || headerCtx.images.length > 0)) },
+          ...(headerCtx.hyperlinks.length > 0 || headerCtx.images.length > 0 ? [{ name: 'word/_rels/header1.xml.rels', data: enc.encode(generatePartRels(headerCtx.hyperlinks, headerCtx.images, headerImageOffset)) }] : [])
+        ] : []),
+        ...(hasFooter ? [
+          { name: 'word/footer1.xml', data: enc.encode(generateDocxFooter(footerCtx.elements, footerCtx.hyperlinks.length > 0 || footerCtx.images.length > 0)) },
+          ...(footerCtx.hyperlinks.length > 0 || footerCtx.images.length > 0 ? [{ name: 'word/_rels/footer1.xml.rels', data: enc.encode(generatePartRels(footerCtx.hyperlinks, footerCtx.images, footerImageOffset)) }] : [])
+        ] : []),
+        ...allImages.map((img, i) => ({ name: `word/media/image${i + 1}.${img.ext}`, data: img.data }))
       ]
-
-      if (hasLists) {
-        files.push({ name: 'word/numbering.xml', data: enc.encode(generateDocxNumbering()) })
-      }
-
-      if (hasHeader) {
-        const hasLinksOrImages = headerCtx.hyperlinks.length > 0 || headerCtx.images.length > 0
-        files.push({ name: 'word/header1.xml', data: enc.encode(generateDocxHeader(headerCtx.elements, hasLinksOrImages)) })
-        if (hasLinksOrImages) {
-          files.push({ name: 'word/_rels/header1.xml.rels', data: enc.encode(generatePartRels(headerCtx.hyperlinks, headerCtx.images, headerImageOffset)) })
-        }
-      }
-
-      if (hasFooter) {
-        const hasLinksOrImages = footerCtx.hyperlinks.length > 0 || footerCtx.images.length > 0
-        files.push({ name: 'word/footer1.xml', data: enc.encode(generateDocxFooter(footerCtx.elements, hasLinksOrImages)) })
-        if (hasLinksOrImages) {
-          files.push({ name: 'word/_rels/footer1.xml.rels', data: enc.encode(generatePartRels(footerCtx.hyperlinks, footerCtx.images, footerImageOffset)) })
-        }
-      }
-
-      for (let i = 0; i < allImages.length; i++) {
-        files.push({ name: `word/media/image${i + 1}.${allImages[i].ext}`, data: allImages[i].data })
-      }
-
       return createZip(files)
     }
   }
@@ -989,146 +794,109 @@ const ODT_STYLES = `<?xml version="1.0" encoding="UTF-8"?>
 </office:styles>
 </office:document-styles>`
 
-function buildOdtStyle(name: string, opts?: TextOptions, size?: number): string {
-  let textProps = ''
+type OdtStyleAcc = { styles: string[]; counter: number }
+
+const buildOdtStyle = (name: string, opts?: TextOptions, size?: number): string => {
   const font = opts?.code ? 'Courier New' : opts?.font
-  if (font) textProps += ` style:font-name="${font}"`
-  const sz = size || opts?.size
-  if (sz) textProps += ` fo:font-size="${sz}pt"`
-  if (opts?.bold) textProps += ' fo:font-weight="bold"'
-  if (opts?.italic) textProps += ' fo:font-style="italic"'
-  if (opts?.underline) textProps += ' style:text-underline-style="solid"'
-  if (opts?.strikethrough) textProps += ' style:text-line-through-style="solid"'
-  if (opts?.code) textProps += ' fo:background-color="#E8E8E8"'
-  if (opts?.color) textProps += ` fo:color="${opts.color}"`
+  const textProps = [
+    font ? ` style:font-name="${font}"` : '',
+    size || opts?.size ? ` fo:font-size="${size || opts?.size}pt"` : '',
+    opts?.bold ? ' fo:font-weight="bold"' : '',
+    opts?.italic ? ' fo:font-style="italic"' : '',
+    opts?.underline ? ' style:text-underline-style="solid"' : '',
+    opts?.strikethrough ? ' style:text-line-through-style="solid"' : '',
+    opts?.code ? ' fo:background-color="#E8E8E8"' : '',
+    opts?.color ? ` fo:color="${opts.color}"` : ''
+  ].join('')
   const pProps = opts?.align ? `<style:paragraph-properties fo:text-align="${opts.align}"/>` : ''
   return `<style:style style:name="${name}" style:family="paragraph">${pProps}<style:text-properties${textProps}/></style:style>`
 }
 
-function buildOdtTextStyle(name: string, opts?: TextOptions): string {
-  let textProps = ''
+const buildOdtTextStyle = (name: string, opts?: TextOptions): string => {
   const font = opts?.code ? 'Courier New' : opts?.font
-  if (font) textProps += ` style:font-name="${font}"`
-  if (opts?.size) textProps += ` fo:font-size="${opts.size}pt"`
-  if (opts?.bold) textProps += ' fo:font-weight="bold"'
-  if (opts?.italic) textProps += ' fo:font-style="italic"'
-  if (opts?.underline) textProps += ' style:text-underline-style="solid"'
-  if (opts?.strikethrough) textProps += ' style:text-line-through-style="solid"'
-  if (opts?.code) textProps += ' fo:background-color="#E8E8E8"'
-  if (opts?.color) textProps += ` fo:color="${opts.color}"`
+  const textProps = [
+    font ? ` style:font-name="${font}"` : '',
+    opts?.size ? ` fo:font-size="${opts.size}pt"` : '',
+    opts?.bold ? ' fo:font-weight="bold"' : '',
+    opts?.italic ? ' fo:font-style="italic"' : '',
+    opts?.underline ? ' style:text-underline-style="solid"' : '',
+    opts?.strikethrough ? ' style:text-line-through-style="solid"' : '',
+    opts?.code ? ' fo:background-color="#E8E8E8"' : '',
+    opts?.color ? ` fo:color="${opts.color}"` : ''
+  ].join('')
   return `<style:style style:name="${name}" style:family="text"><style:text-properties${textProps}/></style:style>`
 }
 
-function generateOdtContent(elements: DocElement[]): string {
-  let body = ''
-  let styleCount = 0
-  const styles: string[] = []
+const needsTextStyle = (opts?: TextOptions): boolean =>
+  !!(opts?.bold || opts?.italic || opts?.code || opts?.underline || opts?.strikethrough || opts?.color)
 
-  for (const el of elements) {
-    if (el.type === 'heading') {
-      body += `<text:h text:style-name="Heading${el.level}" text:outline-level="${el.level}">${escapeXml(el.text)}</text:h>`
-    } else if (el.type === 'paragraph') {
-      let styleName = 'Standard'
-      if (el.opts?.bold || el.opts?.italic || el.opts?.color || el.opts?.align || el.opts?.font || el.opts?.underline) {
-        styleName = `P${++styleCount}`
-        styles.push(buildOdtStyle(styleName, el.opts))
-      }
-      body += `<text:p text:style-name="${styleName}">${escapeXml(el.text)}</text:p>`
-    } else if (el.type === 'text') {
-      const styleName = `P${++styleCount}`
-      styles.push(buildOdtStyle(styleName, el.opts, el.size))
-      body += `<text:p text:style-name="${styleName}">${escapeXml(el.text)}</text:p>`
-    } else if (el.type === 'lineBreak') {
-      body += '<text:p text:style-name="Standard"/>'
-    } else if (el.type === 'horizontalRule') {
-      body += '<text:p text:style-name="Standard">────────────────────────────────────────</text:p>'
-    } else if (el.type === 'list') {
-      body += `<text:list text:style-name="${el.ordered ? 'Numbering_20_1' : 'List_20_1'}">`
-      for (const item of el.items) {
-        body += `<text:list-item><text:p text:style-name="Standard">${escapeXml(item)}</text:p></text:list-item>`
-      }
-      body += '</text:list>'
-    } else if (el.type === 'table') {
-      body += `<table:table xmlns:table="${NS.table}">`
-      for (const row of el.rows) {
-        body += '<table:table-row>'
-        for (const cell of row) {
-          body += `<table:table-cell><text:p>${escapeXml(cell)}</text:p></table:table-cell>`
-        }
-        body += '</table:table-row>'
-      }
-      body += '</table:table>'
-    } else if (el.type === 'link') {
-      body += `<text:p><text:a xlink:href="${escapeXml(el.url)}" xmlns:xlink="${NS.xlink}">${escapeXml(el.text)}</text:a></text:p>`
-    } else if (el.type === 'richParagraph') {
-      body += `<text:p text:style-name="Standard">`
-      for (const run of el.runs) {
-        if (run.opts?.bold || run.opts?.italic || run.opts?.code || run.opts?.underline || run.opts?.strikethrough || run.opts?.color) {
-          const styleName = `T${++styleCount}`
-          styles.push(buildOdtTextStyle(styleName, run.opts))
-          body += `<text:span text:style-name="${styleName}">${escapeXml(run.text)}</text:span>`
-        } else {
-          body += escapeXml(run.text)
-        }
-      }
-      body += '</text:p>'
-    } else if (el.type === 'richList') {
-      const buildOdtList = (items: ListItem[], ordered: boolean) => {
-        body += `<text:list text:style-name="${ordered ? 'Numbering_20_1' : 'List_20_1'}">`
-        for (const item of items) {
-          body += '<text:list-item><text:p text:style-name="Standard">'
-          for (const run of item.runs) {
-            if (run.opts?.bold || run.opts?.italic || run.opts?.code || run.opts?.underline || run.opts?.strikethrough || run.opts?.color) {
-              const styleName = `T${++styleCount}`
-              styles.push(buildOdtTextStyle(styleName, run.opts))
-              body += `<text:span text:style-name="${styleName}">${escapeXml(run.text)}</text:span>`
-            } else {
-              body += escapeXml(run.text)
-            }
-          }
-          body += '</text:p>'
-          if (item.children) buildOdtList(item.children.items, item.children.ordered)
-          body += '</text:list-item>'
-        }
-        body += '</text:list>'
-      }
-      buildOdtList(el.items, el.ordered)
-    } else if (el.type === 'richTable') {
-      body += `<table:table xmlns:table="${NS.table}">`
-      for (const row of el.rows) {
-        body += '<table:table-row>'
-        for (const cell of row) {
-          body += '<table:table-cell><text:p>'
-          for (const run of cell) {
-            if (run.opts?.bold || run.opts?.italic || run.opts?.code || run.opts?.underline || run.opts?.strikethrough || run.opts?.color) {
-              const styleName = `T${++styleCount}`
-              styles.push(buildOdtTextStyle(styleName, run.opts))
-              body += `<text:span text:style-name="${styleName}">${escapeXml(run.text)}</text:span>`
-            } else {
-              body += escapeXml(run.text)
-            }
-          }
-          body += '</text:p></table:table-cell>'
-        }
-        body += '</table:table-row>'
-      }
-      body += '</table:table>'
-    } else if (el.type === 'blockquote') {
-      body += '<text:p text:style-name="Standard">'
-      for (const run of el.runs) {
-        body += escapeXml(run.text)
-      }
-      body += '</text:p>'
-    } else if (el.type === 'codeBlock') {
-      const codeStyleName = `P${++styleCount}`
-      styles.push(`<style:style style:name="${codeStyleName}" style:family="paragraph"><style:text-properties style:font-name="Courier New" fo:background-color="#F5F5F5"/></style:style>`)
-      for (const line of el.code.split('\n')) {
-        body += `<text:p text:style-name="${codeStyleName}">${escapeXml(line)}</text:p>`
-      }
+const buildOdtRuns = (runs: TextRun[], acc: OdtStyleAcc): string =>
+  runs.map(run => {
+    if (needsTextStyle(run.opts)) {
+      const styleName = `T${++acc.counter}`
+      acc.styles.push(buildOdtTextStyle(styleName, run.opts))
+      return `<text:span text:style-name="${styleName}">${escapeXml(run.text)}</text:span>`
     }
-  }
+    return escapeXml(run.text)
+  }).join('')
 
-  const autoStyles = styles.length > 0 ? `<office:automatic-styles>${styles.join('')}</office:automatic-styles>` : ''
+const buildOdtList = (items: ListItem[], ordered: boolean, acc: OdtStyleAcc): string => {
+  const listItems = items.map(item =>
+    `<text:list-item><text:p text:style-name="Standard">${buildOdtRuns(item.runs, acc)}</text:p>${item.children ? buildOdtList(item.children.items, item.children.ordered, acc) : ''}</text:list-item>`
+  ).join('')
+  return `<text:list text:style-name="${ordered ? 'Numbering_20_1' : 'List_20_1'}">${listItems}</text:list>`
+}
+
+const elementToOdt = (el: DocElement, acc: OdtStyleAcc): string => {
+  switch (el.type) {
+    case 'heading':
+      return `<text:h text:style-name="Heading${el.level}" text:outline-level="${el.level}">${escapeXml(el.text)}</text:h>`
+    case 'paragraph': {
+      if (el.opts?.bold || el.opts?.italic || el.opts?.color || el.opts?.align || el.opts?.font || el.opts?.underline) {
+        const styleName = `P${++acc.counter}`
+        acc.styles.push(buildOdtStyle(styleName, el.opts))
+        return `<text:p text:style-name="${styleName}">${escapeXml(el.text)}</text:p>`
+      }
+      return `<text:p text:style-name="Standard">${escapeXml(el.text)}</text:p>`
+    }
+    case 'text': {
+      const styleName = `P${++acc.counter}`
+      acc.styles.push(buildOdtStyle(styleName, el.opts, el.size))
+      return `<text:p text:style-name="${styleName}">${escapeXml(el.text)}</text:p>`
+    }
+    case 'lineBreak':
+      return '<text:p text:style-name="Standard"/>'
+    case 'horizontalRule':
+      return '<text:p text:style-name="Standard">────────────────────────────────────────</text:p>'
+    case 'list':
+      return `<text:list text:style-name="${el.ordered ? 'Numbering_20_1' : 'List_20_1'}">${el.items.map(item => `<text:list-item><text:p text:style-name="Standard">${escapeXml(item)}</text:p></text:list-item>`).join('')}</text:list>`
+    case 'table':
+      return `<table:table xmlns:table="${NS.table}">${el.rows.map(row => `<table:table-row>${row.map(cell => `<table:table-cell><text:p>${escapeXml(cell)}</text:p></table:table-cell>`).join('')}</table:table-row>`).join('')}</table:table>`
+    case 'link':
+      return `<text:p><text:a xlink:href="${escapeXml(el.url)}" xmlns:xlink="${NS.xlink}">${escapeXml(el.text)}</text:a></text:p>`
+    case 'richParagraph':
+      return `<text:p text:style-name="Standard">${buildOdtRuns(el.runs, acc)}</text:p>`
+    case 'richList':
+      return buildOdtList(el.items, el.ordered, acc)
+    case 'richTable':
+      return `<table:table xmlns:table="${NS.table}">${el.rows.map(row => `<table:table-row>${row.map(cell => `<table:table-cell><text:p>${buildOdtRuns(cell, acc)}</text:p></table:table-cell>`).join('')}</table:table-row>`).join('')}</table:table>`
+    case 'blockquote':
+      return `<text:p text:style-name="Standard">${el.runs.map(run => escapeXml(run.text)).join('')}</text:p>`
+    case 'codeBlock': {
+      const styleName = `P${++acc.counter}`
+      acc.styles.push(`<style:style style:name="${styleName}" style:family="paragraph"><style:text-properties style:font-name="Courier New" fo:background-color="#F5F5F5"/></style:style>`)
+      return el.code.split('\n').map(line => `<text:p text:style-name="${styleName}">${escapeXml(line)}</text:p>`).join('')
+    }
+    case 'image':
+    case 'pageNumber':
+      return ''
+  }
+}
+
+const generateOdtContent = (elements: DocElement[]): string => {
+  const acc: OdtStyleAcc = { styles: [], counter: 0 }
+  const body = elements.map(el => elementToOdt(el, acc)).join('')
+  const autoStyles = acc.styles.length > 0 ? `<office:automatic-styles>${acc.styles.join('')}</office:automatic-styles>` : ''
   return `<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content xmlns:office="${NS.office}" xmlns:text="${NS.text}" xmlns:style="${NS.style}" xmlns:fo="${NS.fo}" office:version="1.2">
 ${autoStyles}
@@ -1171,24 +939,23 @@ export function markdownToDocx(md: string): Uint8Array {
   mainCtx.elements.push(...parseMarkdownToElements(md))
   const enc = new TextEncoder()
   const hasLists = mainCtx.elements.some(el => el.type === 'list' || el.type === 'richList')
-  const files: { name: string; data: Uint8Array }[] = [
+  const files: ZipEntry[] = [
     { name: '[Content_Types].xml', data: enc.encode(generateDocxContentTypes(hasLists, false, false, [])) },
     { name: '_rels/.rels', data: enc.encode(DOCX_RELS) },
     { name: 'word/_rels/document.xml.rels', data: enc.encode(generateDocxRels(hasLists, false, false, [], [], 0)) },
     { name: 'word/document.xml', data: enc.encode(generateDocxDocument(mainCtx.elements, undefined, undefined)) },
-    { name: 'word/styles.xml', data: enc.encode(generateDocxStyles()) }
+    { name: 'word/styles.xml', data: enc.encode(generateDocxStyles()) },
+    ...(hasLists ? [{ name: 'word/numbering.xml', data: enc.encode(generateDocxNumbering()) }] : [])
   ]
-  if (hasLists) files.push({ name: 'word/numbering.xml', data: enc.encode(generateDocxNumbering()) })
   return createZip(files)
 }
 
 export function markdownToOdt(md: string): Uint8Array {
-  const elements = parseMarkdownToElements(md)
   const enc = new TextEncoder()
   return createZip([
     { name: 'mimetype', data: enc.encode(ODT_MIMETYPE) },
     { name: 'META-INF/manifest.xml', data: enc.encode(ODT_MANIFEST) },
-    { name: 'content.xml', data: enc.encode(generateOdtContent(elements)) },
+    { name: 'content.xml', data: enc.encode(generateOdtContent(parseMarkdownToElements(md))) },
     { name: 'styles.xml', data: enc.encode(ODT_STYLES) }
   ])
 }
