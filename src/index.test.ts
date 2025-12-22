@@ -24,15 +24,37 @@ describe('docx', () => {
     expect(str).toContain('[Content_Types].xml')
     expect(str).toContain('word/document.xml')
     expect(str).toContain('_rels/.rels')
+    expect(str).toContain('word/styles.xml')
   })
 
-  test('renders heading', () => {
+  test('renders heading level 1', () => {
     const doc = docx()
     doc.content((ctx) => ctx.heading('Test Heading', 1))
     const bytes = doc.build()
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('Test Heading')
     expect(str).toContain('Heading1')
+    expect(str).toContain('w:sz w:val="48"')
+  })
+
+  test('renders heading level 2', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.heading('H2 Heading', 2))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('H2 Heading')
+    expect(str).toContain('Heading2')
+    expect(str).toContain('w:sz w:val="36"')
+  })
+
+  test('renders heading level 3', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.heading('H3 Heading', 3))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('H3 Heading')
+    expect(str).toContain('Heading3')
+    expect(str).toContain('w:sz w:val="28"')
   })
 
   test('renders paragraph', () => {
@@ -52,6 +74,17 @@ describe('docx', () => {
     expect(str).toContain('w:sz w:val="48"')
   })
 
+  test('renders text with size and options', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.text('Styled text', 16, { bold: true, color: '#0000ff' }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Styled text')
+    expect(str).toContain('w:sz w:val="32"')
+    expect(str).toContain('<w:b/>')
+    expect(str).toContain('w:color w:val="0000ff"')
+  })
+
   test('applies bold formatting', () => {
     const doc = docx()
     doc.content((ctx) => ctx.paragraph('Bold text', { bold: true }))
@@ -68,6 +101,24 @@ describe('docx', () => {
     expect(str).toContain('<w:i/>')
   })
 
+  test('applies underline formatting', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Underlined', { underline: true }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:u w:val="single"')
+  })
+
+  test('applies combined formatting', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('All styles', { bold: true, italic: true, underline: true }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('<w:b/>')
+    expect(str).toContain('<w:i/>')
+    expect(str).toContain('w:u w:val="single"')
+  })
+
   test('applies color', () => {
     const doc = docx()
     doc.content((ctx) => ctx.paragraph('Red text', { color: '#ff0000' }))
@@ -76,12 +127,58 @@ describe('docx', () => {
     expect(str).toContain('w:color w:val="ff0000"')
   })
 
-  test('applies alignment', () => {
+  test('applies left alignment', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Left', { align: 'left' }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:jc w:val="left"')
+  })
+
+  test('applies center alignment', () => {
     const doc = docx()
     doc.content((ctx) => ctx.paragraph('Centered', { align: 'center' }))
     const bytes = doc.build()
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('w:jc w:val="center"')
+  })
+
+  test('applies right alignment', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Right', { align: 'right' }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:jc w:val="right"')
+  })
+
+  test('applies custom font', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Arial text', { font: 'Arial' }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:rFonts w:ascii="Arial" w:hAnsi="Arial"')
+  })
+
+  test('applies size option in TextOptions', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Sized text', { size: 20 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:sz w:val="40"')
+  })
+
+  test('renders line break', () => {
+    const doc = docx()
+    doc.content((ctx) => {
+      ctx.paragraph('Before')
+      ctx.lineBreak()
+      ctx.paragraph('After')
+    })
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Before')
+    expect(str).toContain('After')
+    expect(str).toContain('<w:p/>')
   })
 
   test('renders horizontal rule', () => {
@@ -90,22 +187,338 @@ describe('docx', () => {
     const bytes = doc.build()
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('w:pBdr')
+    expect(str).toContain('w:bottom')
   })
 
   test('escapes XML special characters', () => {
     const doc = docx()
-    doc.content((ctx) => ctx.paragraph('Test <tag> & "quotes"'))
+    doc.content((ctx) => ctx.paragraph('Test <tag> & "quotes" \'apostrophe\''))
     const bytes = doc.build()
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('&lt;tag&gt;')
     expect(str).toContain('&amp;')
     expect(str).toContain('&quot;')
+    expect(str).toContain('&apos;')
   })
 
   test('supports method chaining', () => {
     const doc = docx()
     const result = doc.content((ctx) => ctx.paragraph('Test'))
     expect(result).toBe(doc)
+  })
+
+  test('supports header chaining', () => {
+    const doc = docx()
+    const result = doc.header((ctx) => ctx.paragraph('Header'))
+    expect(result).toBe(doc)
+  })
+
+  test('supports footer chaining', () => {
+    const doc = docx()
+    const result = doc.footer((ctx) => ctx.paragraph('Footer'))
+    expect(result).toBe(doc)
+  })
+
+  test('renders bullet list', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.list(['Item 1', 'Item 2', 'Item 3']))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Item 1')
+    expect(str).toContain('Item 2')
+    expect(str).toContain('Item 3')
+    expect(str).toContain('w:numId w:val="1"')
+    expect(str).toContain('word/numbering.xml')
+  })
+
+  test('renders numbered list', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.list(['First', 'Second'], true))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('First')
+    expect(str).toContain('Second')
+    expect(str).toContain('w:numId w:val="2"')
+  })
+
+  test('renders multiple lists', () => {
+    const doc = docx()
+    doc.content((ctx) => {
+      ctx.list(['A', 'B'])
+      ctx.list(['1', '2'], true)
+    })
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('A')
+    expect(str).toContain('B')
+    expect(str).toContain('1')
+    expect(str).toContain('2')
+  })
+
+  test('renders single item list', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.list(['Only one']))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Only one')
+  })
+
+  test('renders table', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.table([
+      ['A', 'B'],
+      ['C', 'D']
+    ]))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('<w:tbl>')
+    expect(str).toContain('<w:tr>')
+    expect(str).toContain('<w:tc>')
+    expect(str).toContain('A')
+    expect(str).toContain('B')
+    expect(str).toContain('C')
+    expect(str).toContain('D')
+  })
+
+  test('renders table with column widths', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.table([['X', 'Y']], { colWidths: [2000, 3000] }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:gridCol w:w="2000"')
+    expect(str).toContain('w:gridCol w:w="3000"')
+    expect(str).toContain('w:tcW w:w="2000"')
+    expect(str).toContain('w:tcW w:w="3000"')
+  })
+
+  test('renders table with borders', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.table([['Cell']]))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:tblBorders')
+    expect(str).toContain('w:top')
+    expect(str).toContain('w:bottom')
+    expect(str).toContain('w:left')
+    expect(str).toContain('w:right')
+    expect(str).toContain('w:insideH')
+    expect(str).toContain('w:insideV')
+  })
+
+  test('renders large table', () => {
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      Array.from({ length: 5 }, (_, j) => `R${i}C${j}`)
+    )
+    const doc = docx()
+    doc.content((ctx) => ctx.table(rows))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('R0C0')
+    expect(str).toContain('R9C4')
+  })
+
+  test('renders hyperlink', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.link('Click here', 'https://example.com'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Click here')
+    expect(str).toContain('w:hyperlink')
+    expect(str).toContain('https://example.com')
+    expect(str).toContain('TargetMode="External"')
+  })
+
+  test('renders hyperlink with styling', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.link('Styled link', 'https://example.com', { bold: true }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Styled link')
+    expect(str).toContain('<w:b/>')
+    expect(str).toContain('w:u w:val="single"')
+  })
+
+  test('renders multiple hyperlinks', () => {
+    const doc = docx()
+    doc.content((ctx) => {
+      ctx.link('Link 1', 'https://one.com')
+      ctx.link('Link 2', 'https://two.com')
+    })
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Link 1')
+    expect(str).toContain('Link 2')
+    expect(str).toContain('https://one.com')
+    expect(str).toContain('https://two.com')
+  })
+
+  test('renders PNG image', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const doc = docx()
+    doc.content((ctx) => ctx.image(pngBytes, { width: 2, height: 1 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:drawing')
+    expect(str).toContain('wp:inline')
+    expect(str).toContain('word/media/image1.png')
+    expect(str).toContain('image/png')
+  })
+
+  test('detects JPEG image type', () => {
+    const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+    const doc = docx()
+    doc.content((ctx) => ctx.image(jpegBytes, { width: 1, height: 1 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('image/jpeg')
+    expect(str).toContain('image1.jpeg')
+  })
+
+  test('detects GIF image type', () => {
+    const gifBytes = new Uint8Array([0x47, 0x49, 0x46, 0x38])
+    const doc = docx()
+    doc.content((ctx) => ctx.image(gifBytes, { width: 1, height: 1 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('image/gif')
+    expect(str).toContain('image1.gif')
+  })
+
+  test('renders multiple images', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+    const doc = docx()
+    doc.content((ctx) => {
+      ctx.image(pngBytes, { width: 1, height: 1 })
+      ctx.image(jpegBytes, { width: 2, height: 2 })
+    })
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('image1.png')
+    expect(str).toContain('image2.jpeg')
+  })
+
+  test('calculates image dimensions correctly', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const doc = docx()
+    doc.content((ctx) => ctx.image(pngBytes, { width: 2, height: 1.5 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('cx="1828800"')
+    expect(str).toContain('cy="1371600"')
+  })
+
+  test('renders header', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Body'))
+    doc.header((ctx) => ctx.paragraph('Header text'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/header1.xml')
+    expect(str).toContain('Header text')
+    expect(str).toContain('w:headerReference')
+  })
+
+  test('renders footer', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Body'))
+    doc.footer((ctx) => ctx.paragraph('Footer text'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/footer1.xml')
+    expect(str).toContain('Footer text')
+    expect(str).toContain('w:footerReference')
+  })
+
+  test('renders header and footer together', () => {
+    const doc = docx()
+    doc.header((ctx) => ctx.paragraph('Header'))
+    doc.footer((ctx) => ctx.paragraph('Footer'))
+    doc.content((ctx) => ctx.paragraph('Body'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/header1.xml')
+    expect(str).toContain('word/footer1.xml')
+    expect(str).toContain('Header')
+    expect(str).toContain('Footer')
+    expect(str).toContain('Body')
+  })
+
+  test('renders page number', () => {
+    const doc = docx()
+    doc.footer((ctx) => ctx.pageNumber())
+    doc.content((ctx) => ctx.paragraph('Body'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:fldChar')
+    expect(str).toContain('PAGE')
+    expect(str).toContain('w:instrText')
+    expect(str).toContain('fldCharType="begin"')
+    expect(str).toContain('fldCharType="separate"')
+    expect(str).toContain('fldCharType="end"')
+  })
+
+  test('includes styles.xml with defaults', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Test'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/styles.xml')
+    expect(str).toContain('w:docDefaults')
+    expect(str).toContain('Calibri')
+  })
+
+  test('includes heading styles in styles.xml', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('Test'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Heading 1')
+    expect(str).toContain('Heading 2')
+    expect(str).toContain('Heading 3')
+  })
+
+  test('excludes numbering.xml when no lists', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.paragraph('No lists'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).not.toContain('word/numbering.xml')
+  })
+
+  test('includes numbering.xml when lists present', () => {
+    const doc = docx()
+    doc.content((ctx) => ctx.list(['Item']))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/numbering.xml')
+    expect(str).toContain('w:abstractNum')
+    expect(str).toContain('w:num')
+  })
+
+  test('complex document with all features', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const doc = docx()
+    doc.header((ctx) => ctx.paragraph('Company', { bold: true }))
+    doc.footer((ctx) => ctx.pageNumber())
+    doc.content((ctx) => {
+      ctx.heading('Title', 1)
+      ctx.paragraph('Intro', { italic: true })
+      ctx.list(['A', 'B', 'C'])
+      ctx.table([['X', 'Y'], ['1', '2']])
+      ctx.link('Website', 'https://example.com')
+      ctx.image(pngBytes, { width: 1, height: 1 })
+      ctx.horizontalRule()
+      ctx.paragraph('End', { align: 'center' })
+    })
+    const bytes = doc.build()
+    expect(bytes.length).toBeGreaterThan(1000)
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Title')
+    expect(str).toContain('Intro')
+    expect(str).toContain('Website')
+    expect(str).toContain('word/header1.xml')
+    expect(str).toContain('word/footer1.xml')
   })
 })
 
@@ -143,13 +556,32 @@ describe('odt', () => {
     expect(str).toContain('META-INF/manifest.xml')
   })
 
-  test('renders heading', () => {
+  test('renders heading level 1', () => {
     const doc = odt()
     doc.content((ctx) => ctx.heading('Test Heading', 1))
     const bytes = doc.build()
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('Test Heading')
     expect(str).toContain('Heading1')
+    expect(str).toContain('text:outline-level="1"')
+  })
+
+  test('renders heading level 2', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.heading('H2', 2))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Heading2')
+    expect(str).toContain('text:outline-level="2"')
+  })
+
+  test('renders heading level 3', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.heading('H3', 3))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Heading3')
+    expect(str).toContain('text:outline-level="3"')
   })
 
   test('renders paragraph', () => {
@@ -185,12 +617,54 @@ describe('odt', () => {
     expect(str).toContain('fo:font-style="italic"')
   })
 
+  test('applies underline formatting', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.paragraph('Underlined', { underline: true }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('style:text-underline-style="solid"')
+  })
+
+  test('applies combined formatting', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.paragraph('All styles', { bold: true, italic: true, underline: true }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('fo:font-weight="bold"')
+    expect(str).toContain('fo:font-style="italic"')
+    expect(str).toContain('style:text-underline-style="solid"')
+  })
+
   test('applies color', () => {
     const doc = odt()
     doc.content((ctx) => ctx.paragraph('Red text', { color: '#ff0000' }))
     const bytes = doc.build()
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('fo:color="#ff0000"')
+  })
+
+  test('applies alignment', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.paragraph('Centered', { align: 'center' }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('fo:text-align="center"')
+  })
+
+  test('applies custom font', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.paragraph('Arial text', { font: 'Arial' }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('style:font-name="Arial"')
+  })
+
+  test('renders horizontal rule', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.horizontalRule())
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('────')
   })
 
   test('escapes XML special characters', () => {
@@ -208,6 +682,64 @@ describe('odt', () => {
     const result = doc.content((ctx) => ctx.paragraph('Test'))
     expect(result).toBe(doc)
   })
+
+  test('renders bullet list', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.list(['Item 1', 'Item 2']))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('text:list')
+    expect(str).toContain('text:list-item')
+    expect(str).toContain('Item 1')
+    expect(str).toContain('Item 2')
+  })
+
+  test('renders numbered list', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.list(['First', 'Second'], true))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('text:list')
+    expect(str).toContain('Numbering')
+  })
+
+  test('renders table', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.table([
+      ['A', 'B'],
+      ['C', 'D']
+    ]))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('table:table')
+    expect(str).toContain('table:table-row')
+    expect(str).toContain('table:table-cell')
+    expect(str).toContain('A')
+    expect(str).toContain('D')
+  })
+
+  test('renders hyperlink', () => {
+    const doc = odt()
+    doc.content((ctx) => ctx.link('Click here', 'https://example.com'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('text:a')
+    expect(str).toContain('xlink:href')
+    expect(str).toContain('https://example.com')
+  })
+
+  test('creates automatic styles for formatted text', () => {
+    const doc = odt()
+    doc.content((ctx) => {
+      ctx.paragraph('Normal')
+      ctx.paragraph('Bold', { bold: true })
+      ctx.paragraph('Italic', { italic: true })
+    })
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('office:automatic-styles')
+    expect(str).toContain('style:style')
+  })
 })
 
 describe('markdownToDocx', () => {
@@ -216,38 +748,108 @@ describe('markdownToDocx', () => {
     expect(bytes).toBeInstanceOf(Uint8Array)
   })
 
-  test('converts headers', () => {
-    const bytes = markdownToDocx('# H1\n## H2\n### H3')
+  test('converts h1 header', () => {
+    const bytes = markdownToDocx('# Heading 1')
     const str = new TextDecoder().decode(bytes)
-    expect(str).toContain('H1')
-    expect(str).toContain('H2')
-    expect(str).toContain('H3')
+    expect(str).toContain('Heading 1')
+    expect(str).toContain('Heading1')
   })
 
-  test('converts bullet lists', () => {
+  test('converts h2 header', () => {
+    const bytes = markdownToDocx('## Heading 2')
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Heading 2')
+    expect(str).toContain('Heading2')
+  })
+
+  test('converts h3 header', () => {
+    const bytes = markdownToDocx('### Heading 3')
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Heading 3')
+    expect(str).toContain('Heading3')
+  })
+
+  test('converts bullet lists with dash', () => {
     const bytes = markdownToDocx('- Item 1\n- Item 2')
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('Item 1')
     expect(str).toContain('Item 2')
+    expect(str).toContain('w:numId w:val="1"')
+  })
+
+  test('converts bullet lists with asterisk', () => {
+    const bytes = markdownToDocx('* Item A\n* Item B')
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Item A')
+    expect(str).toContain('Item B')
   })
 
   test('converts numbered lists', () => {
-    const bytes = markdownToDocx('1. First\n2. Second')
+    const bytes = markdownToDocx('1. First\n2. Second\n3. Third')
     const str = new TextDecoder().decode(bytes)
-    expect(str).toContain('1. First')
-    expect(str).toContain('2. Second')
+    expect(str).toContain('First')
+    expect(str).toContain('Second')
+    expect(str).toContain('Third')
+    expect(str).toContain('w:numId w:val="2"')
   })
 
-  test('converts horizontal rules', () => {
+  test('converts horizontal rules with dashes', () => {
     const bytes = markdownToDocx('---')
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('w:pBdr')
+  })
+
+  test('converts horizontal rules with asterisks', () => {
+    const bytes = markdownToDocx('***')
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:pBdr')
+  })
+
+  test('converts horizontal rules with underscores', () => {
+    const bytes = markdownToDocx('___')
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('w:pBdr')
+  })
+
+  test('converts paragraphs', () => {
+    const bytes = markdownToDocx('This is a paragraph.\n\nThis is another.')
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('This is a paragraph.')
+    expect(str).toContain('This is another.')
   })
 
   test('handles empty input', () => {
     const bytes = markdownToDocx('')
     expect(bytes).toBeInstanceOf(Uint8Array)
     expect(bytes.length).toBeGreaterThan(0)
+  })
+
+  test('handles complex markdown', () => {
+    const md = `# Title
+
+Introduction paragraph.
+
+## Section 1
+
+- Point A
+- Point B
+
+## Section 2
+
+1. First step
+2. Second step
+
+---
+
+Conclusion.`
+    const bytes = markdownToDocx(md)
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('Title')
+    expect(str).toContain('Section 1')
+    expect(str).toContain('Section 2')
+    expect(str).toContain('Point A')
+    expect(str).toContain('First step')
+    expect(str).toContain('Conclusion')
   })
 })
 
@@ -270,6 +872,14 @@ describe('markdownToOdt', () => {
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('Item 1')
     expect(str).toContain('Item 2')
+    expect(str).toContain('text:list')
+  })
+
+  test('converts numbered lists', () => {
+    const bytes = markdownToOdt('1. First\n2. Second')
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('First')
+    expect(str).toContain('Second')
   })
 
   test('handles empty input', () => {

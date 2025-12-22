@@ -1,6 +1,6 @@
 # tinydocx
 
-Minimal DOCX/ODT creation library. **<400 LOC, zero dependencies, makes real documents.**
+Minimal DOCX/ODT creation library. **~640 LOC, zero dependencies.**
 
 ```
 npm install tinydocx
@@ -12,30 +12,25 @@ npm install tinydocx
 
 |  | tinydocx | docx |
 | --- | --- | --- |
-| **Size** | 2.6 KB | 108.6 KB |
+| **Size (gzip)** | 5.5 KB | 108.6 KB |
 | **Dependencies** | 0 | 5 |
 
-**~42x smaller.** We removed custom fonts, images, headers/footers, tables, and advanced features. What's left is the 90% use case: **put text in a document.**
-
-### Build with it
-
-Invoices, receipts, reports, contracts, letters, simple exports
+**~20x smaller.** Everything you need: text, tables, lists, images, links, headers/footers.
 
 ### Features
 
 | Feature | Description |
 | --- | --- |
-| **Text** | Any size, bold/italic, hex colors |
+| **Text** | Any size, bold/italic/underline, hex colors, custom fonts |
 | **Paragraphs** | Alignment (left/center/right) |
-| **Headings** | H1, H2, H3 with appropriate sizing |
-| **Markdown** | Convert markdown to DOCX/ODT |
-| **ODT** | OpenDocument format support |
-
-### Not included
-
-Images, headers/footers, page numbers, tables, custom fonts, lists, hyperlinks
-
-Need those? Use [docx](https://github.com/dolanmiu/docx).
+| **Headings** | H1, H2, H3 |
+| **Lists** | Bullet and numbered |
+| **Tables** | With borders and column widths |
+| **Hyperlinks** | External links |
+| **Images** | PNG, JPEG, GIF |
+| **Headers/Footers** | With page numbers |
+| **Markdown** | Convert to DOCX/ODT |
+| **ODT** | OpenDocument support |
 
 ---
 
@@ -51,17 +46,15 @@ doc.content((ctx) => {
   ctx.paragraph('This is a paragraph.')
   ctx.paragraph('Bold text', { bold: true })
   ctx.paragraph('Centered', { align: 'center' })
-  ctx.text('Custom size (18pt)', 18)
 })
 
 writeFileSync('output.docx', doc.build())
 ```
 
-### ODT (OpenDocument)
+### ODT
 
 ```typescript
 import { odt } from 'tinydocx'
-import { writeFileSync } from 'fs'
 
 const doc = odt()
 doc.content((ctx) => {
@@ -79,20 +72,25 @@ writeFileSync('output.odt', doc.build())
 ```typescript
 import { docx, odt, markdownToDocx, markdownToOdt } from 'tinydocx'
 
-// Create document
-const doc = docx()  // or odt()
+const doc = docx()
 
-// Add content
 doc.content((ctx) => {
-  ctx.heading(str, level)          // level: 1, 2, or 3
-  ctx.paragraph(str, opts?)        // simple paragraph
-  ctx.text(str, size, opts?)       // text with font size (points)
-  ctx.lineBreak()                  // empty line
-  ctx.horizontalRule()             // horizontal rule
+  ctx.heading(str, level)
+  ctx.paragraph(str, opts?)
+  ctx.text(str, size, opts?)
+  ctx.lineBreak()
+  ctx.horizontalRule()
+  ctx.list(items, ordered?)
+  ctx.table(rows, opts?)
+  ctx.link(text, url, opts?)
+  ctx.image(data, opts)
+  ctx.pageNumber()
 })
 
-// Build
-doc.build()                        // returns Uint8Array
+doc.header((ctx) => { ... })
+doc.footer((ctx) => { ... })
+
+doc.build()
 ```
 
 ### TextOptions
@@ -102,34 +100,67 @@ doc.build()                        // returns Uint8Array
   align?: 'left' | 'center' | 'right'
   bold?: boolean
   italic?: boolean
-  color?: string   // hex color (e.g., '#FF0000')
+  underline?: boolean
+  color?: string
+  font?: string
+  size?: number
 }
 ```
 
-### Markdown conversion
+### Lists
+
+```typescript
+ctx.list(['Item 1', 'Item 2', 'Item 3'])
+ctx.list(['First', 'Second', 'Third'], true)
+```
+
+### Tables
+
+```typescript
+ctx.table([
+  ['Name', 'Age'],
+  ['Alice', '30'],
+  ['Bob', '25']
+])
+
+ctx.table([['Wide', 'Narrow']], { colWidths: [4000, 2000] })
+```
+
+### Images
+
+```typescript
+const imageData = readFileSync('photo.png')
+ctx.image(imageData, { width: 4, height: 3 })
+```
+
+### Hyperlinks
+
+```typescript
+ctx.link('Click here', 'https://example.com')
+ctx.link('Styled', 'https://example.com', { bold: true })
+```
+
+### Headers/Footers
+
+```typescript
+doc.header((ctx) => ctx.paragraph('Company', { bold: true }))
+doc.footer((ctx) => ctx.pageNumber())
+```
+
+### Markdown
 
 ```typescript
 import { markdownToDocx, markdownToOdt } from 'tinydocx'
-
-const md = `
-# Hello World
-
-This is a paragraph.
-
-- Item 1
-- Item 2
-
----
-
-1. First
-2. Second
-`
 
 writeFileSync('output.docx', markdownToDocx(md))
 writeFileSync('output.odt', markdownToOdt(md))
 ```
 
-Supported markdown: `# ## ###` headings, `- *` bullet lists, `1.` numbered lists, `---` rules, paragraphs
+Supported: `# ## ###` headings, `- *` bullets, `1.` numbered, `---` rules
+
+---
+
+![Sample DOCX output](sample.jpeg)
 
 ---
 
@@ -137,31 +168,26 @@ Supported markdown: `# ## ###` headings, `- *` bullet lists, `1.` numbered lists
 
 ```typescript
 import { docx } from 'tinydocx'
-import { writeFileSync } from 'fs'
 
 const doc = docx()
+
+doc.header((ctx) => ctx.paragraph('ACME CORP', { bold: true }))
+doc.footer((ctx) => ctx.pageNumber())
+
 doc.content((ctx) => {
   ctx.heading('INVOICE', 1)
   ctx.text('#INV-2025-001', 10, { color: '#666666' })
   ctx.lineBreak()
 
-  ctx.paragraph('Acme Corporation', { bold: true })
-  ctx.paragraph('123 Business Street')
-  ctx.paragraph('New York, NY 10001', { color: '#666666' })
+  ctx.table([
+    ['Description', 'Amount'],
+    ['Website Development', '$5,000.00'],
+    ['Hosting (Annual)', '$200.00']
+  ], { colWidths: [6000, 3000] })
   ctx.lineBreak()
 
-  ctx.horizontalRule()
-  ctx.lineBreak()
-
-  ctx.paragraph('Website Development - $5,000.00')
-  ctx.paragraph('Hosting (Annual) - $200.00')
-  ctx.paragraph('Maintenance Package - $1,800.00')
-  ctx.lineBreak()
-
-  ctx.paragraph('Total Due: $7,000.00', { bold: true, align: 'right' })
-  ctx.lineBreak()
-
-  ctx.paragraph('Thank you for your business!', { italic: true, align: 'center' })
+  ctx.paragraph('Total: $5,200.00', { bold: true, align: 'right' })
+  ctx.link('View online', 'https://example.com/invoice')
 })
 
 writeFileSync('invoice.docx', doc.build())
@@ -171,25 +197,27 @@ writeFileSync('invoice.docx', doc.build())
 
 ## How it works
 
-A .docx file is a ZIP archive containing XML files. tinydocx generates the minimal required structure:
+DOCX files are ZIP archives with XML:
 
 ```
-[Content_Types].xml    # MIME type declarations
-_rels/.rels            # Package relationships
-word/document.xml      # Your actual content
-word/_rels/document.xml.rels
+[Content_Types].xml
+_rels/.rels
+word/document.xml
+word/styles.xml
+word/numbering.xml
+word/header1.xml
+word/footer1.xml
+word/media/
 ```
 
-ODT files have a similar structure:
+ODT files:
 
 ```
-mimetype               # MIME type (must be first)
-META-INF/manifest.xml  # File manifest
-content.xml            # Your actual content
-styles.xml             # Style definitions
+mimetype
+META-INF/manifest.xml
+content.xml
+styles.xml
 ```
-
-The library includes a minimal ZIP implementation (~60 LOC) and templates the XML directly. No compression (STORE method) keeps the code simple.
 
 ---
 

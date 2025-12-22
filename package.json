@@ -1,7 +1,7 @@
 {
   "name": "tinydocx",
-  "version": "0.2.0",
-  "description": "Minimal DOCX/ODT creation library. Zero dependencies.",
+  "version": "0.3.0",
+  "description": "Minimal DOCX/ODT creation library with tables, images, lists, headers/footers. Zero dependencies.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -31,6 +31,13 @@
     "word",
     "openoffice",
     "document",
+    "tables",
+    "images",
+    "lists",
+    "headers",
+    "footers",
+    "hyperlinks",
+    "markdown",
     "minimal",
     "zero-dependencies"
   ],
