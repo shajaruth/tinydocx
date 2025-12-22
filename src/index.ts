@@ -51,7 +51,7 @@ type DocElement =
   | { type: 'list'; items: string[]; ordered: boolean }
   | { type: 'table'; rows: string[][]; opts?: TableOptions }
   | { type: 'link'; text: string; url: string; opts?: TextOptions; rId: string }
-  | { type: 'image'; data: Uint8Array; opts: ImageOptions; rId: string }
+  | { type: 'image'; data: Uint8Array; opts: ImageOptions; rId: string; docPrId: number }
   | { type: 'pageNumber' }
 
 function crc32(data: Uint8Array): number {
@@ -154,6 +154,7 @@ interface BuildContext {
   hyperlinks: { url: string; rId: string }[]
   images: { data: Uint8Array; rId: string; ext: string }[]
   nextRId: number
+  nextDocPrId: { value: number }
 }
 
 function createContext(ctx: BuildContext): DocContext {
@@ -186,9 +187,10 @@ function createContext(ctx: BuildContext): DocContext {
     },
     image(data: Uint8Array, opts: ImageOptions) {
       const rId = `rId${ctx.nextRId++}`
+      const docPrId = ctx.nextDocPrId.value++
       const ext = detectImageType(data)
       ctx.images.push({ data, rId, ext })
-      ctx.elements.push({ type: 'image', data, opts, rId })
+      ctx.elements.push({ type: 'image', data, opts, rId, docPrId })
     },
     pageNumber() {
       ctx.elements.push({ type: 'pageNumber' })
@@ -200,6 +202,8 @@ function detectImageType(data: Uint8Array): string {
   if (data[0] === 0x89 && data[1] === 0x50) return 'png'
   if (data[0] === 0xff && data[1] === 0xd8) return 'jpeg'
   if (data[0] === 0x47 && data[1] === 0x49) return 'gif'
+  if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
+      data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50) return 'webp'
   return 'png'
 }
 
@@ -273,7 +277,7 @@ function buildDocxBody(elements: DocElement[]): string {
     } else if (el.type === 'image') {
       const cx = Math.round(el.opts.width * 914400)
       const cy = Math.round(el.opts.height * 914400)
-      body += `<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="1" name="Image"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="Image"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${el.rId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+      body += `<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${el.docPrId}" name="Image${el.docPrId}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${el.docPrId}" name="Image${el.docPrId}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${el.rId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
     } else if (el.type === 'pageNumber') {
       body += '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
     }
@@ -300,20 +304,24 @@ ${sectPr}
 </w:document>`
 }
 
-function generateDocxHeader(elements: DocElement[]): string {
+function generateDocxHeader(elements: DocElement[], hasLinksOrImages: boolean): string {
   const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
   const body = buildDocxBody(elements)
+  const rAttr = hasLinksOrImages ? ` xmlns:r="${R}"` : ''
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:hdr xmlns:w="${W}">
+<w:hdr xmlns:w="${W}"${rAttr}>
 ${body}
 </w:hdr>`
 }
 
-function generateDocxFooter(elements: DocElement[]): string {
+function generateDocxFooter(elements: DocElement[], hasLinksOrImages: boolean): string {
   const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
   const body = buildDocxBody(elements)
+  const rAttr = hasLinksOrImages ? ` xmlns:r="${R}"` : ''
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:ftr xmlns:w="${W}">
+<w:ftr xmlns:w="${W}"${rAttr}>
 ${body}
 </w:ftr>`
 }
@@ -372,7 +380,8 @@ function generateDocxRels(
   hasHeader: boolean,
   hasFooter: boolean,
   hyperlinks: { url: string; rId: string }[],
-  images: { rId: string; ext: string }[]
+  images: { rId: string; ext: string }[],
+  imageOffset: number
 ): string {
   const REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
   const OFFREL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -397,7 +406,30 @@ function generateDocxRels(
   }
 
   for (let i = 0; i < images.length; i++) {
-    rels += `<Relationship Id="${images[i].rId}" Type="${OFFREL}/image" Target="media/image${i + 1}.${images[i].ext}"/>`
+    rels += `<Relationship Id="${images[i].rId}" Type="${OFFREL}/image" Target="media/image${imageOffset + i + 1}.${images[i].ext}"/>`
+  }
+
+  rels += `</Relationships>`
+  return rels
+}
+
+function generatePartRels(
+  hyperlinks: { url: string; rId: string }[],
+  images: { rId: string; ext: string }[],
+  imageOffset: number
+): string {
+  const REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
+  const OFFREL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+
+  let rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="${REL}">`
+
+  for (const link of hyperlinks) {
+    rels += `<Relationship Id="${link.rId}" Type="${OFFREL}/hyperlink" Target="${escapeXml(link.url)}" TargetMode="External"/>`
+  }
+
+  for (let i = 0; i < images.length; i++) {
+    rels += `<Relationship Id="${images[i].rId}" Type="${OFFREL}/image" Target="media/image${imageOffset + i + 1}.${images[i].ext}"/>`
   }
 
   rels += `</Relationships>`
@@ -413,9 +445,10 @@ const DOCX_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
  * Create a new DOCX document
  */
 export function docx(): DOCXBuilder {
-  const mainCtx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 10 }
-  const headerCtx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 100 }
-  const footerCtx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 200 }
+  const docPrIdCounter = { value: 1 }
+  const mainCtx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 10, nextDocPrId: docPrIdCounter }
+  const headerCtx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 100, nextDocPrId: docPrIdCounter }
+  const footerCtx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 200, nextDocPrId: docPrIdCounter }
   let hasHeader = false
   let hasFooter = false
 
@@ -437,14 +470,17 @@ export function docx(): DOCXBuilder {
     build() {
       const enc = new TextEncoder()
       const hasLists = mainCtx.elements.some(el => el.type === 'list')
-      const allHyperlinks = [...mainCtx.hyperlinks, ...headerCtx.hyperlinks, ...footerCtx.hyperlinks]
       const allImages = [...mainCtx.images, ...headerCtx.images, ...footerCtx.images]
       const imageExts = allImages.map(img => img.ext)
+
+      const mainImageOffset = 0
+      const headerImageOffset = mainCtx.images.length
+      const footerImageOffset = mainCtx.images.length + headerCtx.images.length
 
       const files: { name: string; data: Uint8Array }[] = [
         { name: '[Content_Types].xml', data: enc.encode(generateDocxContentTypes(hasLists, hasHeader, hasFooter, imageExts)) },
         { name: '_rels/.rels', data: enc.encode(DOCX_RELS) },
-        { name: 'word/_rels/document.xml.rels', data: enc.encode(generateDocxRels(hasLists, hasHeader, hasFooter, allHyperlinks, allImages)) },
+        { name: 'word/_rels/document.xml.rels', data: enc.encode(generateDocxRels(hasLists, hasHeader, hasFooter, mainCtx.hyperlinks, mainCtx.images, mainImageOffset)) },
         { name: 'word/document.xml', data: enc.encode(generateDocxDocument(mainCtx.elements, hasHeader ? 'rIdHeader' : undefined, hasFooter ? 'rIdFooter' : undefined)) },
         { name: 'word/styles.xml', data: enc.encode(generateDocxStyles()) }
       ]
@@ -452,11 +488,21 @@ export function docx(): DOCXBuilder {
       if (hasLists) {
         files.push({ name: 'word/numbering.xml', data: enc.encode(generateDocxNumbering()) })
       }
+
       if (hasHeader) {
-        files.push({ name: 'word/header1.xml', data: enc.encode(generateDocxHeader(headerCtx.elements)) })
+        const hasLinksOrImages = headerCtx.hyperlinks.length > 0 || headerCtx.images.length > 0
+        files.push({ name: 'word/header1.xml', data: enc.encode(generateDocxHeader(headerCtx.elements, hasLinksOrImages)) })
+        if (hasLinksOrImages) {
+          files.push({ name: 'word/_rels/header1.xml.rels', data: enc.encode(generatePartRels(headerCtx.hyperlinks, headerCtx.images, headerImageOffset)) })
+        }
       }
+
       if (hasFooter) {
-        files.push({ name: 'word/footer1.xml', data: enc.encode(generateDocxFooter(footerCtx.elements)) })
+        const hasLinksOrImages = footerCtx.hyperlinks.length > 0 || footerCtx.images.length > 0
+        files.push({ name: 'word/footer1.xml', data: enc.encode(generateDocxFooter(footerCtx.elements, hasLinksOrImages)) })
+        if (hasLinksOrImages) {
+          files.push({ name: 'word/_rels/footer1.xml.rels', data: enc.encode(generatePartRels(footerCtx.hyperlinks, footerCtx.images, footerImageOffset)) })
+        }
       }
 
       for (let i = 0; i < allImages.length; i++) {
@@ -561,7 +607,7 @@ ${body}
  * Create a new ODT document
  */
 export function odt(): ODTBuilder {
-  const ctx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 1 }
+  const ctx: BuildContext = { elements: [], hyperlinks: [], images: [], nextRId: 1, nextDocPrId: { value: 1 } }
   const builder: ODTBuilder = {
     content(fn) {
       fn(createContext(ctx))

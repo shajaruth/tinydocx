@@ -1,6 +1,6 @@
 # tinydocx
 
-Minimal DOCX/ODT creation library. **~640 LOC, zero dependencies.**
+Minimal DOCX/ODT creation library. **~680 LOC, zero dependencies.**
 
 ```
 npm install tinydocx
@@ -12,7 +12,7 @@ npm install tinydocx
 
 |  | tinydocx | docx |
 | --- | --- | --- |
-| **Size (gzip)** | 5.5 KB | 108.6 KB |
+| **Size (gzip)** | 5.0 KB | 108.6 KB |
 | **Dependencies** | 0 | 5 |
 
 **~20x smaller.** Everything you need: text, tables, lists, images, links, headers/footers.

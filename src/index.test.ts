@@ -384,6 +384,15 @@ describe('docx', () => {
     expect(str).toContain('image1.gif')
   })
 
+  test('detects WebP image type', () => {
+    const webpBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50])
+    const doc = docx()
+    doc.content((ctx) => ctx.image(webpBytes, { width: 1, height: 1 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('image1.webp')
+  })
+
   test('renders multiple images', () => {
     const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
     const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
@@ -396,6 +405,21 @@ describe('docx', () => {
     const str = new TextDecoder().decode(bytes)
     expect(str).toContain('image1.png')
     expect(str).toContain('image2.jpeg')
+  })
+
+  test('assigns unique docPr IDs to multiple images', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const doc = docx()
+    doc.content((ctx) => {
+      ctx.image(pngBytes, { width: 1, height: 1 })
+      ctx.image(pngBytes, { width: 1, height: 1 })
+      ctx.image(pngBytes, { width: 1, height: 1 })
+    })
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('wp:docPr id="1"')
+    expect(str).toContain('wp:docPr id="2"')
+    expect(str).toContain('wp:docPr id="3"')
   })
 
   test('calculates image dimensions correctly', () => {
@@ -442,6 +466,50 @@ describe('docx', () => {
     expect(str).toContain('Header')
     expect(str).toContain('Footer')
     expect(str).toContain('Body')
+  })
+
+  test('header with hyperlink creates separate rels file', () => {
+    const doc = docx()
+    doc.header((ctx) => ctx.link('Click', 'https://example.com'))
+    doc.content((ctx) => ctx.paragraph('Body'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/_rels/header1.xml.rels')
+    expect(str).toContain('xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"')
+  })
+
+  test('footer with image creates separate rels file', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const doc = docx()
+    doc.footer((ctx) => ctx.image(pngBytes, { width: 1, height: 1 }))
+    doc.content((ctx) => ctx.paragraph('Body'))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/_rels/footer1.xml.rels')
+  })
+
+  test('images in header use correct media index', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const doc = docx()
+    doc.content((ctx) => ctx.image(pngBytes, { width: 1, height: 1 }))
+    doc.header((ctx) => ctx.image(pngBytes, { width: 1, height: 1 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('word/media/image1.png')
+    expect(str).toContain('word/media/image2.png')
+  })
+
+  test('images across content, header and footer share unique docPr IDs', () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const doc = docx()
+    doc.content((ctx) => ctx.image(pngBytes, { width: 1, height: 1 }))
+    doc.header((ctx) => ctx.image(pngBytes, { width: 1, height: 1 }))
+    doc.footer((ctx) => ctx.image(pngBytes, { width: 1, height: 1 }))
+    const bytes = doc.build()
+    const str = new TextDecoder().decode(bytes)
+    expect(str).toContain('wp:docPr id="1"')
+    expect(str).toContain('wp:docPr id="2"')
+    expect(str).toContain('wp:docPr id="3"')
   })
 
   test('renders page number', () => {
