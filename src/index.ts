@@ -426,27 +426,25 @@ const crc32 = (data: Uint8Array): number =>
 const escapeXml = (str: string): string =>
   str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 
-/**
- * Centralized XML namespace registry.
- * All namespace URIs are defined here to ensure consistency across the codebase
- * and prevent typos from causing invalid XML.
- */
+const COURIER = 'Courier New'
+const OOXML = 'http://schemas.openxmlformats.org/'
+const OD = 'urn:oasis:names:tc:opendocument:xmlns:'
 const NS = {
-  w: 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
-  r: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
-  rel: 'http://schemas.openxmlformats.org/package/2006/relationships',
-  ct: 'http://schemas.openxmlformats.org/package/2006/content-types',
-  wp: 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
-  a: 'http://schemas.openxmlformats.org/drawingml/2006/main',
-  pic: 'http://schemas.openxmlformats.org/drawingml/2006/picture',
-  manifest: 'urn:oasis:names:tc:opendocument:xmlns:manifest:1.0',
-  office: 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
-  text: 'urn:oasis:names:tc:opendocument:xmlns:text:1.0',
-  style: 'urn:oasis:names:tc:opendocument:xmlns:style:1.0',
-  fo: 'urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0',
-  table: 'urn:oasis:names:tc:opendocument:xmlns:table:1.0',
+  w: OOXML + 'wordprocessingml/2006/main',
+  r: OOXML + 'officeDocument/2006/relationships',
+  rel: OOXML + 'package/2006/relationships',
+  ct: OOXML + 'package/2006/content-types',
+  wp: OOXML + 'drawingml/2006/wordprocessingDrawing',
+  a: OOXML + 'drawingml/2006/main',
+  pic: OOXML + 'drawingml/2006/picture',
+  manifest: OD + 'manifest:1.0',
+  office: OD + 'office:1.0',
+  text: OD + 'text:1.0',
+  style: OD + 'style:1.0',
+  fo: OD + 'xsl-fo-compatible:1.0',
+  table: OD + 'table:1.0',
   xlink: 'http://www.w3.org/1999/xlink',
-} as const
+}
 
 type ZipEntry = { name: string; data: Uint8Array }
 
@@ -565,7 +563,7 @@ const createContext = (ctx: BuildContext): DocContext => ({
 
 const buildDocxRunProps = (opts?: TextOptions, size?: number): string => {
   const parts: string[] = []
-  const font = opts?.code ? 'Courier New' : opts?.font
+  const font = opts?.code ? COURIER : opts?.font
   if (font) parts.push(`<w:rFonts w:ascii="${font}" w:hAnsi="${font}"/>`)
   const sz = size || opts?.size
   if (sz) parts.push(`<w:sz w:val="${sz * 2}"/><w:szCs w:val="${sz * 2}"/>`)
@@ -645,7 +643,7 @@ const elementToDocx = (el: DocElement): string => {
       }).join('')
     }
     case 'codeBlock':
-      return el.code.split('\n').map(line => `<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F5F5F5"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`).join('')
+      return el.code.split('\n').map(line => `<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F5F5F5"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="${COURIER}" w:hAnsi="${COURIER}"/></w:rPr><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`).join('')
   }
 }
 
@@ -826,7 +824,7 @@ const ODT_STYLES = `<?xml version="1.0" encoding="UTF-8"?>
 type OdtStyleAcc = { styles: string[]; counter: number }
 
 const buildOdtStyle = (name: string, opts?: TextOptions, size?: number): string => {
-  const font = opts?.code ? 'Courier New' : opts?.font
+  const font = opts?.code ? COURIER : opts?.font
   const textProps = [
     font ? ` style:font-name="${font}"` : '',
     size || opts?.size ? ` fo:font-size="${size || opts?.size}pt"` : '',
@@ -842,7 +840,7 @@ const buildOdtStyle = (name: string, opts?: TextOptions, size?: number): string 
 }
 
 const buildOdtTextStyle = (name: string, opts?: TextOptions): string => {
-  const font = opts?.code ? 'Courier New' : opts?.font
+  const font = opts?.code ? COURIER : opts?.font
   const textProps = [
     font ? ` style:font-name="${font}"` : '',
     opts?.size ? ` fo:font-size="${opts.size}pt"` : '',
@@ -913,7 +911,7 @@ const elementToOdt = (el: DocElement, acc: OdtStyleAcc): string => {
       return el.elements.map(child => elementToOdt(child, acc)).join('')
     case 'codeBlock': {
       const styleName = `P${++acc.counter}`
-      acc.styles.push(`<style:style style:name="${styleName}" style:family="paragraph"><style:text-properties style:font-name="Courier New" fo:background-color="#F5F5F5"/></style:style>`)
+      acc.styles.push(`<style:style style:name="${styleName}" style:family="paragraph"><style:text-properties style:font-name="${COURIER}" fo:background-color="#F5F5F5"/></style:style>`)
       return el.code.split('\n').map(line => `<text:p text:style-name="${styleName}">${escapeXml(line)}</text:p>`).join('')
     }
     case 'image':

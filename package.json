@@ -19,8 +19,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun build ./src/index.ts --outdir ./dist --target node && bun run build:cjs && bun run build:types",
-    "build:cjs": "bun build ./src/index.ts --outfile ./dist/index.cjs --target node --format cjs",
+    "build": "bun build ./src/index.ts --outdir ./dist --target node --minify && bun run build:cjs && bun run build:types",
+    "build:cjs": "bun build ./src/index.ts --outfile ./dist/index.cjs --target node --format cjs --minify",
     "build:types": "tsc --declaration --emitDeclarationOnly --outDir dist src/index.ts",
     "test": "bun test",
     "prepublishOnly": "bun run build"
