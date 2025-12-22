@@ -7,7 +7,5 @@ yarn.lock
 pnpm-lock.yaml
 *.log
 .DS_Store
-sample.ts
-sample.docx
-sample.odt
-cat.jpg
+*.docx
+*.odt
