@@ -57,6 +57,21 @@ doc.content((ctx) => {
 writeFileSync('output.docx', doc.build())
 ```
 
+### ODT (OpenDocument)
+
+```typescript
+import { odt } from 'tinydocx'
+import { writeFileSync } from 'fs'
+
+const doc = odt()
+doc.content((ctx) => {
+  ctx.heading('Hello World', 1)
+  ctx.paragraph('Same API, different format.')
+})
+
+writeFileSync('output.odt', doc.build())
+```
+
 ---
 
 ## API
