@@ -26,7 +26,7 @@ export interface TextRun {
 }
 
 export interface DocContext {
-  heading(str: string, level: 1 | 2 | 3): void
+  heading(str: string, level: 1 | 2 | 3 | 4 | 5 | 6): void
   paragraph(str: string, opts?: TextOptions): void
   text(str: string, size: number, opts?: TextOptions): void
   lineBreak(): void
@@ -56,7 +56,7 @@ interface ListItem {
 }
 
 type DocElement =
-  | { type: 'heading'; text: string; level: 1 | 2 | 3 }
+  | { type: 'heading'; text: string; level: 1 | 2 | 3 | 4 | 5 | 6 }
   | { type: 'paragraph'; text: string; opts?: TextOptions }
   | { type: 'richParagraph'; runs: TextRun[]; align?: 'left' | 'center' | 'right' }
   | { type: 'text'; text: string; size: number; opts?: TextOptions }
@@ -68,7 +68,7 @@ type DocElement =
   | { type: 'richTable'; rows: TextRun[][][]; opts?: TableOptions }
   | { type: 'link'; text: string; url: string; opts?: TextOptions; rId: string }
   | { type: 'image'; data: Uint8Array; opts: ImageOptions; rId: string; docPrId: number }
-  | { type: 'blockquote'; runs: TextRun[] }
+  | { type: 'blockquote'; elements: DocElement[] }
   | { type: 'codeBlock'; code: string; language?: string }
   | { type: 'pageNumber' }
 
@@ -82,7 +82,7 @@ type InlineToken =
   | { tag: 'image'; alt: string; src: string }
 
 type BlockToken =
-  | { tag: 'h'; level: 1 | 2 | 3; content: InlineToken[] }
+  | { tag: 'h'; level: 1 | 2 | 3 | 4 | 5 | 6; content: InlineToken[] }
   | { tag: 'p'; content: InlineToken[] }
   | { tag: 'pre'; code: string; lang?: string }
   | { tag: 'quote'; blocks: BlockToken[] }
@@ -125,12 +125,15 @@ const seq = <A, B>(p1: Parser<A>, p2: Parser<B>): Parser<[A, B]> => s => {
 const alt = <T>(...ps: Parser<T>[]): Parser<T> => s =>
   ps.reduce<Result<T>>((acc, p) => acc.ok ? acc : p(s), fail())
 
+const MAX_PARSE_DEPTH = 1000
+
 const many = <T>(p: Parser<T>): Parser<T[]> => {
-  const go = (s: string, acc: T[]): Result<T[]> => {
+  const go = (s: string, acc: T[], depth: number): Result<T[]> => {
+    if (depth >= MAX_PARSE_DEPTH) return ok(acc, s)
     const r = p(s)
-    return r.ok ? go(r.rest, [...acc, r.val]) : ok(acc, s)
+    return r.ok ? go(r.rest, [...acc, r.val], depth + 1) : ok(acc, s)
   }
-  return s => go(s, [])
+  return s => go(s, [], 0)
 }
 
 const lazy = <T>(f: () => Parser<T>): Parser<T> => s => f()(s)
@@ -180,6 +183,7 @@ const strikeP: Parser<InlineToken> = map(
 )
 
 const italicP: Parser<InlineToken> = s => {
+  if (s.length < 3) return fail()
   if (s[0] !== '*' && s[0] !== '_') return fail()
   if (s[1] === s[0]) return fail()
   const marker = s[0]
@@ -219,13 +223,18 @@ const parseInlineTokens = (s: string): InlineToken[] => {
   return r.ok ? r.val : [{ tag: 'text', content: s }]
 }
 
-const mergeTextTokens = (tokens: InlineToken[]): InlineToken[] =>
-  tokens.reduce<InlineToken[]>((acc, t) => {
-    const last = acc[acc.length - 1]
-    return t.tag === 'text' && last?.tag === 'text'
-      ? [...acc.slice(0, -1), { tag: 'text', content: last.content + t.content }]
-      : [...acc, t]
-  }, [])
+const mergeTextTokens = (tokens: InlineToken[]): InlineToken[] => {
+  const result: InlineToken[] = []
+  for (const t of tokens) {
+    const last = result[result.length - 1]
+    if (t.tag === 'text' && last?.tag === 'text') {
+      result[result.length - 1] = { tag: 'text', content: last.content + t.content }
+    } else {
+      result.push(t)
+    }
+  }
+  return result
+}
 
 const tokensToRuns = (tokens: InlineToken[], inherited: TextOptions = {}): TextRun[] =>
   mergeTextTokens(tokens).flatMap((t): TextRun[] => {
@@ -271,9 +280,10 @@ const parseCodeBlock = (state: LineState): [BlockToken, LineState] | null => {
 
 const parseHeading = (state: LineState): [BlockToken, LineState] | null => {
   const line = peek(state)
-  if (!line || !/^#{1,3}\s/.test(line)) return null
-  const m = line.match(/^(#{1,3})\s+(.*)$/)!
-  const level = Math.min(m[1].length, 3) as 1 | 2 | 3
+  if (!line || !/^#{1,6}\s/.test(line)) return null
+  const m = line.match(/^(#{1,6})\s+(.*)$/)
+  if (!m) return null
+  const level = Math.min(m[1].length, 6) as 1 | 2 | 3 | 4 | 5 | 6
   return [{ tag: 'h', level, content: parseInlineTokens(m[2]) }, advance(state)]
 }
 
@@ -285,11 +295,13 @@ const parseHr = (state: LineState): [BlockToken, LineState] | null => {
 
 const parseQuote = (state: LineState): [BlockToken, LineState] | null => {
   const line = peek(state)
-  if (!line?.startsWith('> ')) return null
+  if (!line?.startsWith('>')) return null
+  const stripQuote = (l: string): string => l.startsWith('> ') ? l.slice(2) : l.slice(1)
+  const isQuoteLine = (l: string | undefined): boolean => l?.startsWith('>') ?? false
   const collectQuote = (s: LineState, acc: string[]): [string[], LineState] => {
     const l = peek(s)
-    if (!l?.startsWith('> ')) return [acc, s]
-    return collectQuote(advance(s), [...acc, l.slice(2)])
+    if (!isQuoteLine(l)) return [acc, s]
+    return collectQuote(advance(s), [...acc, stripQuote(l!)])
   }
   const [quoteLines, next] = collectQuote(state, [])
   return [{ tag: 'quote', blocks: parseBlocks({ lines: quoteLines, idx: 0 }) }, next]
@@ -392,7 +404,7 @@ const blockToElement = (b: BlockToken): DocElement[] => {
     case 'p': return [{ type: 'richParagraph', runs: tokensToRuns(b.content) }]
     case 'pre': return [{ type: 'codeBlock', code: b.code, language: b.lang }]
     case 'hr': return [{ type: 'horizontalRule' }]
-    case 'quote': return [{ type: 'blockquote', runs: b.blocks.flatMap(bb => bb.tag === 'p' ? tokensToRuns(bb.content) : []) }]
+    case 'quote': return [{ type: 'blockquote', elements: b.blocks.flatMap(blockToElement) }]
     case 'ul': return [{ type: 'richList', ordered: false, items: b.items.map(listNodeToListItem) }]
     case 'ol': return [{ type: 'richList', ordered: true, items: b.items.map(listNodeToListItem) }]
     case 'table': return [{ type: 'richTable', rows: [b.head.map(h => tokensToRuns(h)), ...b.body.map(r => r.map(c => tokensToRuns(c)))] }]
@@ -518,11 +530,15 @@ interface BuildContext {
   nextDocPrId: { value: number }
 }
 
-const detectImageType = (data: Uint8Array): string =>
-  data[0] === 0x89 && data[1] === 0x50 ? 'png' :
-  data[0] === 0xff && data[1] === 0xd8 ? 'jpeg' :
-  data[0] === 0x47 && data[1] === 0x49 ? 'gif' :
-  data[0] === 0x52 && data[1] === 0x49 && data[8] === 0x57 && data[9] === 0x45 ? 'webp' : 'png'
+const detectImageType = (data: Uint8Array): string => {
+  if (data.length < 4) return 'png'
+  if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) return 'png'
+  if (data[0] === 0xff && data[1] === 0xd8) return 'jpeg'
+  if (data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46) return 'gif'
+  if (data.length >= 12 && data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
+      data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50) return 'webp'
+  return 'png'
+}
 
 const createContext = (ctx: BuildContext): DocContext => ({
   heading: (str, level) => { ctx.elements.push({ type: 'heading', text: str, level }) },
@@ -576,7 +592,7 @@ const buildDocxListItems = (items: ListItem[], ordered: boolean, level: number):
     ...(item.children ? [buildDocxListItems(item.children.items, item.children.ordered, level + 1)] : [])
   ]).join('')
 
-const HEADING_SIZES: Record<1 | 2 | 3, number> = { 1: 48, 2: 36, 3: 28 }
+const HEADING_SIZES: Record<1 | 2 | 3 | 4 | 5 | 6, number> = { 1: 48, 2: 36, 3: 28, 4: 24, 5: 20, 6: 18 }
 
 const TABLE_BORDERS = '<w:top w:val="single" w:sz="4" w:color="auto"/><w:left w:val="single" w:sz="4" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:color="auto"/><w:right w:val="single" w:sz="4" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:color="auto"/>'
 
@@ -619,8 +635,15 @@ const elementToDocx = (el: DocElement): string => {
       const rows = el.rows.map(row => `<w:tr>${row.map((cell, i) => `<w:tc>${el.opts?.colWidths?.[i] ? `<w:tcPr><w:tcW w:w="${el.opts.colWidths[i]}" w:type="dxa"/></w:tcPr>` : ''}<w:p>${buildDocxRuns(cell)}</w:p></w:tc>`).join('')}</w:tr>`).join('')
       return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${TABLE_BORDERS}</w:tblBorders></w:tblPr>${grid}${rows}</w:tbl>`
     }
-    case 'blockquote':
-      return `<w:p><w:pPr><w:ind w:left="720"/><w:pBdr><w:left w:val="single" w:sz="18" w:space="4" w:color="CCCCCC"/></w:pBdr></w:pPr>${el.runs.map(run => `<w:r>${buildDocxRunProps({ ...run.opts, color: run.opts?.color || '#666666' })}<w:t>${escapeXml(run.text)}</w:t></w:r>`).join('')}</w:p>`
+    case 'blockquote': {
+      const quoteStyle = '<w:pPr><w:ind w:left="720"/><w:pBdr><w:left w:val="single" w:sz="18" w:space="4" w:color="CCCCCC"/></w:pBdr></w:pPr>'
+      return el.elements.map(child => {
+        if (child.type === 'richParagraph') {
+          return `<w:p>${quoteStyle}${buildDocxRuns(child.runs)}</w:p>`
+        }
+        return elementToDocx(child)
+      }).join('')
+    }
     case 'codeBlock':
       return el.code.split('\n').map(line => `<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F5F5F5"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`).join('')
   }
@@ -652,6 +675,9 @@ const generateDocxStyles = (): string => `<?xml version="1.0" encoding="UTF-8" s
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="48"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="Heading 2"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="36"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="Heading 3"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="Heading 4"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="Heading 5"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="20"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="Heading 6"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="18"/></w:rPr></w:style>
 </w:styles>`
 
 const generateDocxNumbering = (): string => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -791,6 +817,9 @@ const ODT_STYLES = `<?xml version="1.0" encoding="UTF-8"?>
 <style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="24pt" fo:font-weight="bold"/></style:style>
 <style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style>
 <style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style>
+<style:style style:name="Heading4" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style>
+<style:style style:name="Heading5" style:family="paragraph"><style:text-properties fo:font-size="10pt" fo:font-weight="bold"/></style:style>
+<style:style style:name="Heading6" style:family="paragraph"><style:text-properties fo:font-size="9pt" fo:font-weight="bold"/></style:style>
 </office:styles>
 </office:document-styles>`
 
@@ -881,7 +910,7 @@ const elementToOdt = (el: DocElement, acc: OdtStyleAcc): string => {
     case 'richTable':
       return `<table:table xmlns:table="${NS.table}">${el.rows.map(row => `<table:table-row>${row.map(cell => `<table:table-cell><text:p>${buildOdtRuns(cell, acc)}</text:p></table:table-cell>`).join('')}</table:table-row>`).join('')}</table:table>`
     case 'blockquote':
-      return `<text:p text:style-name="Standard">${el.runs.map(run => escapeXml(run.text)).join('')}</text:p>`
+      return el.elements.map(child => elementToOdt(child, acc)).join('')
     case 'codeBlock': {
       const styleName = `P${++acc.counter}`
       acc.styles.push(`<style:style style:name="${styleName}" style:family="paragraph"><style:text-properties style:font-name="Courier New" fo:background-color="#F5F5F5"/></style:style>`)
