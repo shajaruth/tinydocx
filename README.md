@@ -101,6 +101,8 @@ doc.build()
   bold?: boolean
   italic?: boolean
   underline?: boolean
+  strikethrough?: boolean
+  code?: boolean
   color?: string
   font?: string
   size?: number
