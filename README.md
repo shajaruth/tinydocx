@@ -12,10 +12,10 @@ npm install tinydocx
 
 |  | tinydocx | docx |
 | --- | --- | --- |
-| **Size (gzip)** | 5.0 KB | 108.6 KB |
+| **Size (gzip)** | 7.7 KB | 108.6 KB |
 | **Dependencies** | 0 | 5 |
 
-**~20x smaller.** Everything you need: text, tables, lists, images, links, headers/footers.
+**~14x smaller.** Everything you need: text, tables, lists, images, links, headers/footers.
 
 ### Features
 
