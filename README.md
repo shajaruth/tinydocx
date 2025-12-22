@@ -12,10 +12,10 @@ npm install tinydocx
 
 |  | tinydocx | docx |
 | --- | --- | --- |
-| **Size** | ~4 KB | ~180 KB |
+| **Size** | 2.6 KB | 108.6 KB |
 | **Dependencies** | 0 | 5 |
 
-**~45x smaller.** We removed custom fonts, images, headers/footers, tables, and advanced features. What's left is the 90% use case: **put text in a document.**
+**~42x smaller.** We removed custom fonts, images, headers/footers, tables, and advanced features. What's left is the 90% use case: **put text in a document.**
 
 ### Build with it
 
